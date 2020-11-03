@@ -58,8 +58,8 @@ const TREEBIN_SHIFT: usize = 8;
 
 // TODO: runtime configurable? documentation?
 const DEFAULT_GRANULARITY: usize = 64 * 1024;
-const DEFAULT_TRIM_THRESHOLD: usize = 2 * 1024 * 1024;
-const MAX_RELEASE_CHECK_RATE: usize = 4095;
+const DEFAULT_TRIM_THRESHOLD: usize = 1;
+const MAX_RELEASE_CHECK_RATE: usize = 1;
 
 #[repr(C)]
 struct Chunk {
