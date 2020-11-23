@@ -33,7 +33,7 @@ pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
     let mut last_page = first_page + (size / page_size());
     if size % page_size() != 0 { last_page += 1; }
 
-    for page in first_page..=last_page {
+    for page in first_page..last_page {
         sys::free(page as _);
     }
 
