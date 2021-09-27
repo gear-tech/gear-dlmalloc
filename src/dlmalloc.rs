@@ -352,10 +352,12 @@ impl Dlmalloc {
             DEFAULT_GRANULARITY,
         );
 
+        libc_print::libc_print!("Try alloc {} pages\n", asize / DEFAULT_GRANULARITY);
         let (tbase, tsize, flags) = sys::alloc(asize);
         if tbase.is_null() {
             return tbase;
         }
+        libc_print::libc_print!("Alocced {:?} {:X} {}\n", tbase, tsize, flags);
 
         self.footprint += tsize;
         self.max_footprint = cmp::max(self.max_footprint, self.footprint);
@@ -406,14 +408,15 @@ impl Dlmalloc {
         }
 
         if size < self.topsize {
+            let top_prev_in_use = if Chunk::pinuse( self.top) { PINUSE } else { 0 };
             self.topsize -= size;
-            let rsize = self.topsize;
-            let p = self.top;
-            self.top = Chunk::plus_offset(p, size);
-            let r = self.top;
-            (*r).head = rsize | PINUSE;
-            Chunk::set_size_and_pinuse_of_inuse_chunk(p, size);
-            let ret = Chunk::to_mem(p);
+            let new_chunk = self.top;
+            self.top = Chunk::plus_offset(new_chunk, size);
+            (*self.top).head = self.topsize | PINUSE;
+            (*new_chunk).head = size | CINUSE | top_prev_in_use;
+
+            // Chunk::set_size_and_pinuse_of_inuse_chunk(p, size);
+            let ret = Chunk::to_mem(new_chunk);
             self.check_top_chunk(self.top);
             self.check_malloced_chunk(ret, size);
             self.check_malloc_state();
@@ -807,6 +810,7 @@ impl Dlmalloc {
         self.check_malloc_state();
     }
 
+    /// Finds segment which contains @ptr: @ptr is in [a, b)
     unsafe fn segment_holding(&self, ptr: *mut u8) -> *mut Segment {
         let mut sp = &self.seg as *const Segment as *mut Segment;
         while !sp.is_null() {
@@ -1161,6 +1165,7 @@ impl Dlmalloc {
 
             if Chunk::mmapped(p) {
                 psize += prevsize + self.mmap_foot_pad();
+                libc_print::libc_print!("Free {:?} {}", (p as *mut u8).offset(-(prevsize as isize)), psize);
                 if sys::free((p as *mut u8).offset(-(prevsize as isize)), psize) {
                     self.footprint -= psize;
                 }
