@@ -25,7 +25,7 @@ libc = { version = "0.2", default-features = false }
 # `src/tools/rustc-std-workspace` folder
 core = { version = '1.0.0', optional = true, package = 'rustc-std-workspace-core' }
 compiler_builtins = { version = '0.1.0', optional = true }
-libc_print = { git = "https://github.com/grishasobol/rust-libc-print.git" }
+# libc_print = { git = "https://github.com/grishasobol/rust-libc-print.git" }
 
 [dev-dependencies]
 rand = "0.3"
@@ -37,6 +37,9 @@ debug-assertions = true
 debug-assertions = true
 
 [profile.test]
+debug-assertions = true
+
+[term]
 debug-assertions = true
 
 [features]
