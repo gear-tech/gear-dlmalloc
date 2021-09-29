@@ -39,8 +39,6 @@ debug-assertions = true
 [profile.test]
 debug-assertions = true
 
-[term]
-debug-assertions = true
 
 [features]
 # Enable implementations of the `GlobalAlloc` standard library API, exporting a
