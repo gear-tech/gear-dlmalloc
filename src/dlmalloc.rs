@@ -16,6 +16,7 @@ use sys;
 #[cfg(target_os = "linux")]
 pub mod ext {
     pub fn debug(s: &str, size: usize) {
+        libc_print::libc_println!("{}", s);
     }
 }
 
@@ -32,9 +33,17 @@ pub mod ext {
     }
 }
 
+macro_rules! static_print {
+    ($($arg:tt)*) => {
+        type StaticStr = str_buf::StrBuf::<100>;
+        let mut buf = StaticStr::new();
+        core::fmt::write( &mut buf, format_args!($($arg)*)).unwrap();
+        ext::debug( &buf, buf.len());
+    }
+}
+
 pub fn myprint( s: &str, mut x: usize ) {
     let mut buf = [0u8; 20];
-
     let mut i = 0;
     for c in s.chars() {
         buf[i] = c as u8;
@@ -1064,8 +1073,15 @@ impl Dlmalloc {
     }
 
     unsafe fn smallbin_at(&mut self, idx: u32) -> *mut Chunk {
-        dlassert!(((idx * 2) as usize) < self.smallbins.len());
-        &mut *self.smallbins.get_unchecked_mut((idx as usize) * 2) as *mut *mut Chunk as *mut Chunk
+        let idx = (idx * 2) as usize;
+        dlassert!(idx < self.smallbins.len());
+
+        let smallbins_ptr = &self.smallbins as *const *mut Chunk;
+        let idx_ptr = smallbins_ptr.offset(idx as isize ) as *mut Chunk;
+        // let ptr = self.smallbins[idx];
+        // let ptr = self.smallbins.get_unchecked_mut( (idx as usize) * 2);
+        return idx_ptr;
+        // &mut *self.smallbins.get_unchecked_mut((idx as usize) * 2) as *mut *mut Chunk as *mut Chunk
     }
 
     unsafe fn treebin_at(&mut self, idx: u32) -> *mut *mut TreeChunk {
@@ -1601,23 +1617,27 @@ impl Dlmalloc {
         if !cfg!(debug_assertions) {
             return;
         }
-        let b = self.smallbin_at(idx);
-        let mut p = (*b).next;
-        let empty = self.smallmap & (1 << idx) == 0;
-        if p == b {
-            dlassert!(empty)
-        }
-        if !empty {
-            while p != b {
-                let size = Chunk::size(p);
-                self.check_free_chunk(p);
-                dlassert!(self.small_index(size) == idx);
-                dlassert!((*p).next == b || Chunk::size((*p).next) == Chunk::size(p));
-                let q = Chunk::next(p);
-                if (*q).head != Chunk::fencepost_head() {
-                    self.check_inuse_chunk(q);
+
+        let head_chunk = self.smallbin_at(idx);
+        let mut bin_chunk = (*head_chunk).next;
+
+        let idx_bin_is_empty = self.smallmap & (1 << idx) == 0;
+        if bin_chunk == head_chunk {
+            dlassert!(idx_bin_is_empty);
+        } else if !idx_bin_is_empty {
+            while bin_chunk != head_chunk {
+                self.check_free_chunk(bin_chunk);
+
+                let bin_size = Chunk::size(bin_chunk);
+                dlassert!(self.small_index(bin_size) == idx);
+                dlassert!((*bin_chunk).next == head_chunk
+                           || Chunk::size((*bin_chunk).next) == bin_size);
+
+                let next_mem_chunk = Chunk::next(bin_chunk);
+                if (*next_mem_chunk).head != Chunk::fencepost_head() {
+                    self.check_inuse_chunk(next_mem_chunk);
                 }
-                p = (*p).next;
+                bin_chunk = (*bin_chunk).next;
             }
         }
     }
@@ -1772,7 +1792,7 @@ impl Chunk {
     }
 
     unsafe fn next(me: *mut Chunk) -> *mut Chunk {
-        (me as *mut u8).offset(((*me).head & !FLAG_BITS) as isize) as *mut Chunk
+        (me as *mut u8).offset(Chunk::size(me) as isize) as *mut Chunk
     }
 
     unsafe fn prev(me: *mut Chunk) -> *mut Chunk {
