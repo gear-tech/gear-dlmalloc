@@ -76,7 +76,7 @@ pub fn myprint( s: &str, mut x: usize ) {
 
 macro_rules! dlassert {
     ($check:expr) => {
-        if cfg!(debug_assertions) && !($check) {
+        if !($check) { // TODO: add debug_assertions
             myprint( "ALLOC ASSERT: ", line!() as usize);
             handle_alloc_error( self::alloc::alloc::Layout::new::<u32>() );
         }
@@ -446,12 +446,10 @@ impl Dlmalloc {
             DEFAULT_GRANULARITY,
         );
 
-        // libc_print::libc_print!("Try alloc {} pages\n", asize / DEFAULT_GRANULARITY);
         let (alloced_base, alloced_size, flags) = sys::alloc(aligned_size);
         if alloced_base.is_null() {
             return alloced_base;
         }
-        // libc_print::libc_print!("Alocced {:?} {:X} {}\n", tbase, tsize, flags);
 
         self.footprint += alloced_size;
         self.max_footprint = cmp::max(self.max_footprint, self.footprint);
@@ -1302,7 +1300,6 @@ impl Dlmalloc {
 
             if Chunk::mmapped(p) {
                 psize += prevsize + self.mmap_foot_pad();
-                // libc_print::libc_print!("Free {:?} {}", (p as *mut u8).offset(-(prevsize as isize)), psize);
                 if sys::free((p as *mut u8).offset(-(prevsize as isize)), psize) {
                     self.footprint -= psize;
                 }
@@ -1477,7 +1474,7 @@ impl Dlmalloc {
     // Sanity checks
 
     unsafe fn check_any_chunk(&self, p: *mut Chunk) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         dlassert!(
@@ -1487,7 +1484,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_top_chunk(&self, p: *mut Chunk) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         let sp = self.segment_holding(p as *mut u8);
@@ -1505,7 +1502,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_malloced_chunk(&self, mem: *mut u8, s: usize) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         if mem.is_null() {
@@ -1531,7 +1528,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_mmapped_chunk(&self, p: *mut Chunk) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         let sz = Chunk::size(p);
@@ -1548,7 +1545,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_free_chunk(&self, p: *mut Chunk) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         let sz = Chunk::size(p);
@@ -1573,7 +1570,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_malloc_state(&mut self) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         for i in 0..NSMALLBINS {
@@ -1601,7 +1598,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_smallbin(&mut self, idx: u32) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         let b = self.smallbin_at(idx);
@@ -1626,7 +1623,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_treebin(&mut self, idx: u32) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         let tb = self.treebin_at(idx);
@@ -1641,7 +1638,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_tree(&mut self, t: *mut TreeChunk) {
-        if !cfg!(zoop) {
+        if !cfg!(debug_assertions) {
             return;
         }
         let tc = TreeChunk::chunk(t);
