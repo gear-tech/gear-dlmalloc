@@ -2,15 +2,20 @@
 // source at ftp://g.oswego.edu/pub/misc/malloc.c
 //
 // The original source was written by Doug Lea and released to the public domain
+#![allow(unused)]
 
 use core::cmp;
 use core::mem;
 use core::ptr;
 
 extern crate alloc;
+use crate::dlmalloc;
+
 use self::alloc::alloc::handle_alloc_error;
 
 use sys;
+
+static DL_CHECKS : bool = false; // cfg!(debug_assertions)
 
 #[allow(unused)]
 #[cfg(target_os = "linux")]
@@ -33,60 +38,20 @@ pub mod ext {
     }
 }
 
+type StaticStr = str_buf::StrBuf::<20>;
+static mut STATIC_BUFFER: StaticStr = StaticStr::new();
 macro_rules! static_print {
     ($($arg:tt)*) => {
-        type StaticStr = str_buf::StrBuf::<100>;
-        let mut buf = StaticStr::new();
-        core::fmt::write( &mut buf, format_args!($($arg)*)).unwrap();
-        ext::debug( &buf, buf.len());
+        core::fmt::write( &mut STATIC_BUFFER, format_args!($($arg)*)).unwrap();
+        ext::debug( &STATIC_BUFFER, STATIC_BUFFER.len());
+        STATIC_BUFFER.set_len(0);
     }
-}
-
-pub fn myprint( s: &str, mut x: usize ) {
-    let mut buf = [0u8; 20];
-    let mut i = 0;
-    for c in s.chars() {
-        buf[i] = c as u8;
-        i = i + 1;
-    }
-    buf[i] = ' ' as u8;
-    i = i + 1;
-
-    let mut y = x;
-    while y > 0 {
-        y /= 10;
-        i += 1;
-    }
-    let size = i;
-    buf[i] = '\n' as u8;
-
-    while x > 0 {
-        i = i - 1;
-
-        buf[i] = match x % 10 {
-            0 => '0',
-            1 => '1',
-            2 => '2',
-            3 => '3',
-            4 => '4',
-            5 => '5',
-            6 => '6',
-            7 => '7',
-            8 => '8',
-            9 => '9',
-            _ => '?',
-        } as u8;
-
-        x = x / 10;
-    }
-
-    ext::debug( core::str::from_utf8( &buf).unwrap(), size);
 }
 
 macro_rules! dlassert {
     ($check:expr) => {
         if !($check) { // TODO: add debug_assertions
-            myprint( "ALLOC ASSERT: ", line!() as usize);
+            unsafe{ static_print!("ALLOC ASSERT: {}", line!()); };
             handle_alloc_error( self::alloc::alloc::Layout::new::<u32>() );
         }
     };
@@ -1072,16 +1037,14 @@ impl Dlmalloc {
         Chunk::to_mem(vc)
     }
 
+    #[inline(always)]
     unsafe fn smallbin_at(&mut self, idx: u32) -> *mut Chunk {
         let idx = (idx * 2) as usize;
         dlassert!(idx < self.smallbins.len());
 
         let smallbins_ptr = &self.smallbins as *const *mut Chunk;
         let idx_ptr = smallbins_ptr.offset(idx as isize ) as *mut Chunk;
-        // let ptr = self.smallbins[idx];
-        // let ptr = self.smallbins.get_unchecked_mut( (idx as usize) * 2);
         return idx_ptr;
-        // &mut *self.smallbins.get_unchecked_mut((idx as usize) * 2) as *mut *mut Chunk as *mut Chunk
     }
 
     unsafe fn treebin_at(&mut self, idx: u32) -> *mut *mut TreeChunk {
@@ -1490,7 +1453,7 @@ impl Dlmalloc {
     // Sanity checks
 
     unsafe fn check_any_chunk(&self, p: *mut Chunk) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
         dlassert!(
@@ -1500,7 +1463,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_top_chunk(&self, p: *mut Chunk) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
         let sp = self.segment_holding(p as *mut u8);
@@ -1518,7 +1481,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_malloced_chunk(&self, mem: *mut u8, s: usize) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
         if mem.is_null() {
@@ -1544,7 +1507,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_mmapped_chunk(&self, p: *mut Chunk) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
         let sz = Chunk::size(p);
@@ -1561,7 +1524,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_free_chunk(&self, p: *mut Chunk) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
         let sz = Chunk::size(p);
@@ -1585,8 +1548,13 @@ impl Dlmalloc {
         }
     }
 
+        // for i in 0..32 {
+        //     let head_chunk = self.smallbin_at(i as u32);
+        // }
+
+    #[inline(never)]
     unsafe fn check_malloc_state(&mut self) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
         for i in 0..NSMALLBINS {
@@ -1614,7 +1582,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_smallbin(&mut self, idx: u32) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
 
@@ -1643,7 +1611,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_treebin(&mut self, idx: u32) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
         let tb = self.treebin_at(idx);
@@ -1658,7 +1626,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_tree(&mut self, t: *mut TreeChunk) {
-        if !cfg!(debug_assertions) {
+        if !DL_CHECKS {
             return;
         }
         let tc = TreeChunk::chunk(t);
