@@ -48,11 +48,17 @@ macro_rules! static_print {
     }
 }
 
+#[inline(never)]
+unsafe fn dlassert_fn( line: u32)
+{
+    static_print!("ALLOC ASSERT: {}", line);
+    handle_alloc_error( self::alloc::alloc::Layout::new::<u32>() );
+}
+
 macro_rules! dlassert {
     ($check:expr) => {
         if !($check) { // TODO: add debug_assertions
-            unsafe{ static_print!("ALLOC ASSERT: {}", line!()); };
-            handle_alloc_error( self::alloc::alloc::Layout::new::<u32>() );
+            unsafe{ dlassert_fn(line!()); };
         }
     };
 }
@@ -1037,7 +1043,7 @@ impl Dlmalloc {
         Chunk::to_mem(vc)
     }
 
-    #[inline(always)]
+    // #[inline(always)]
     unsafe fn smallbin_at(&mut self, idx: u32) -> *mut Chunk {
         let idx = (idx * 2) as usize;
         dlassert!(idx < self.smallbins.len());
@@ -1047,6 +1053,7 @@ impl Dlmalloc {
         return idx_ptr;
     }
 
+    // #[inline(never)]
     unsafe fn treebin_at(&mut self, idx: u32) -> *mut *mut TreeChunk {
         dlassert!((idx as usize) < self.treebins.len());
         &mut *self.treebins.get_unchecked_mut(idx as usize)
