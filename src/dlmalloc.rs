@@ -324,28 +324,33 @@ impl Dlmalloc {
 
                 if smallbits != 0 {
                     // Has some bigger size small chunks
-
-                    // let leftbits = smallbits << idx; // TODO: & left_bits(1 << idx); ???
-                    // let first_one_bit = first_one_bit(smallbits << idx);
-
                     let bins_idx = (smallbits << idx).trailing_zeros();
                     let head_chunk = self.smallbin_at(bins_idx);
                     let chunk_for_request = self.unlink_first_small_chunk(head_chunk, bins_idx);
 
                     let smallsize = self.small_index2size(bins_idx);
                     let free_size = smallsize - nb;
+
+                    // TODO: mem::size_of::<usize>() != 4 why ???
                     if mem::size_of::<usize>() != 4 && free_size < self.min_chunk_size() {
                         // Use all size in @chunk_for_request
-                        Chunk::set_inuse_and_pinuse(chunk_for_request, smallsize);
+                        (*chunk_for_request).head = smallsize | PINUSE | CINUSE;
+                        Chunk::set_pinuse_for_next(chunk_for_request, smallsize);
                     } else {
-                        Chunk::set_size_and_pinuse_of_inuse_chunk(chunk_for_request, nb);
-                        let r = Chunk::plus_offset(chunk_for_request, nb);
-                        Chunk::set_size_and_pinuse_of_free_chunk(r, free_size);
-                        self.replace_dv(r, free_size);
+                        // In other case use lower part of @chunk_for_request
+                        (*chunk_for_request).head = nb | PINUSE | CINUSE;
+
+                        // set free part as dv
+                        let free_part = Chunk::plus_offset(chunk_for_request, nb);
+                        (*free_part).head = free_size | PINUSE;
+                        Chunk::set_next_chunk_prev_size( free_part, free_size);
+                        self.replace_dv(free_part, free_size);
                     }
-                    let ret = Chunk::to_mem(chunk_for_request);
-                    self.check_malloced_chunk(ret, nb);
-                    return ret;
+
+                    let chunk_for_request_mem = Chunk::to_mem(chunk_for_request);
+                    self.check_malloced_chunk(chunk_for_request_mem, nb);
+
+                    return chunk_for_request_mem;
                 } else if self.treemap != 0 {
                     let mem = self.tmalloc_small(nb);
                     if !mem.is_null() {
@@ -936,37 +941,47 @@ impl Dlmalloc {
     }
 
     unsafe fn tmalloc_small(&mut self, size: usize) -> *mut u8 {
-        let leastbit = first_one_bit(self.treemap);
-        let i = leastbit.trailing_zeros();
-        let mut v = *self.treebin_at(i);
-        let mut t = v;
-        let mut rsize = Chunk::size(TreeChunk::chunk(t)) - size;
+        let first_one_idx = self.treemap.trailing_zeros();
+        let mut first_tree_chunk = *self.treebin_at(first_one_idx);
 
+        // Iterate left and search the most suitable chunk
+        let mut tree_chunk = first_tree_chunk;
+        let mut free_size_left = Chunk::size(TreeChunk::chunk(tree_chunk)) - size;
         loop {
-            t = TreeChunk::leftmost_child(t);
-            if t.is_null() {
+            tree_chunk = TreeChunk::leftmost_child(tree_chunk);
+            if tree_chunk.is_null() {
                 break;
             }
-            let trem = Chunk::size(TreeChunk::chunk(t)) - size;
-            if trem < rsize {
-                rsize = trem;
-                v = t;
+            let diff = Chunk::size(TreeChunk::chunk(tree_chunk)) - size;
+            if diff < free_size_left {
+                free_size_left = diff;
+                first_tree_chunk = tree_chunk;
             }
         }
 
-        let vc = TreeChunk::chunk(v);
-        let r = Chunk::plus_offset(vc, size) as *mut TreeChunk;
-        dlassert!(Chunk::size(vc) == rsize + size);
-        self.unlink_large_chunk(v);
-        if rsize < self.min_chunk_size() {
-            Chunk::set_inuse_and_pinuse(vc, rsize + size);
+        let chunk_for_request = TreeChunk::chunk(first_tree_chunk);
+        let free_tree_chunk = Chunk::plus_offset(chunk_for_request, size) as *mut TreeChunk;
+
+        dlassert!(Chunk::size(chunk_for_request) == free_size_left + size);
+
+        self.unlink_large_chunk(first_tree_chunk);
+
+        if free_size_left < self.min_chunk_size() {
+            // use all mem in chunk
+            (*chunk_for_request).head = (free_size_left + size) | PINUSE | CINUSE;
+            Chunk::set_pinuse_for_next( chunk_for_request, free_size_left + size);
         } else {
-            let rc = TreeChunk::chunk(r);
-            Chunk::set_size_and_pinuse_of_inuse_chunk(vc, size);
-            Chunk::set_size_and_pinuse_of_free_chunk(rc, rsize);
-            self.replace_dv(rc, rsize);
+            // use only part and set free part as dv
+            let free_chunk = TreeChunk::chunk(free_tree_chunk);
+            (*chunk_for_request).head = size | PINUSE | CINUSE;
+
+            (*free_chunk).head = free_size_left | PINUSE;
+            Chunk::set_next_chunk_prev_size(free_chunk, free_size_left);
+
+            self.replace_dv(free_chunk, free_size_left);
         }
-        Chunk::to_mem(vc)
+
+        return Chunk::to_mem(chunk_for_request);
     }
 
     unsafe fn tmalloc_large(&mut self, size: usize) -> *mut u8 {
@@ -1043,7 +1058,17 @@ impl Dlmalloc {
         Chunk::to_mem(vc)
     }
 
-    // #[inline(always)]
+    /// In smallbins array we store Chunks instead *mut Chunks, why?
+    /// Because we need only Chunk::prev and Chunk::next pointers from each chunk
+    /// and chunk has size of 4 pointers then we can store prev and next for each chunk
+    /// in next chunk begin:
+    ///    Second chunk begin    First chunk end
+    ///                      \         \||||||||||| <- prev and next for second chunk
+    /// smallbins:  [----|----|----|----|----|----|----|----|----|----|--]
+    ///            /          ||||||||||| <- prev and next for first chunk
+    ///        First chunk begin, two first pointers never used
+    ///
+    /// So, size must be (bins num * 2) + 2
     unsafe fn smallbin_at(&mut self, idx: u32) -> *mut Chunk {
         let idx = (idx * 2) as usize;
         dlassert!(idx < self.smallbins.len());
@@ -1053,7 +1078,6 @@ impl Dlmalloc {
         return idx_ptr;
     }
 
-    // #[inline(never)]
     unsafe fn treebin_at(&mut self, idx: u32) -> *mut *mut TreeChunk {
         dlassert!((idx as usize) < self.treebins.len());
         &mut *self.treebins.get_unchecked_mut(idx as usize)
@@ -1087,11 +1111,10 @@ impl Dlmalloc {
     }
 
     unsafe fn replace_dv(&mut self, chunk: *mut Chunk, size: usize) {
-        let dvs = self.dvsize;
-        dlassert!(self.is_small(dvs));
-        if dvs != 0 {
-            let dv = self.dv;
-            self.insert_small_chunk(dv, dvs);
+        let dv_size = self.dvsize;
+        dlassert!(self.is_small(dv_size));
+        if dv_size != 0 {
+            self.insert_small_chunk(self.dv, dv_size);
         }
         self.dvsize = size;
         self.dv = chunk;
