@@ -38,7 +38,7 @@ pub mod ext {
     }
 }
 
-type StaticStr = str_buf::StrBuf::<20>;
+type StaticStr = str_buf::StrBuf::<100>;
 static mut STATIC_BUFFER: StaticStr = StaticStr::new();
 macro_rules! static_print {
     ($($arg:tt)*) => {
@@ -646,20 +646,27 @@ impl Dlmalloc {
 
     // Only call this with power-of-two alignment and alignment >
     // `self.malloc_alignment()`
-    pub unsafe fn memalign(&mut self, mut alignment: usize, bytes: usize) -> *mut u8 {
+    pub unsafe fn memalign(&mut self, mut alignment: usize, req_size: usize) -> *mut u8 {
         if alignment < self.min_chunk_size() {
             alignment = self.min_chunk_size();
         }
-        if bytes >= self.max_request() - alignment {
+        if req_size >= self.max_request() - alignment {
             return ptr::null_mut();
         }
-        let nb = self.request2size(bytes);
-        let req = nb + alignment + self.min_chunk_size() - self.chunk_overhead();
-        let mem = self.malloc(req);
+        let req_chunk_size = self.request2size(req_size);
+        let size_to_alloc = req_chunk_size + alignment + self.min_chunk_size() - self.chunk_overhead();
+        let mem = self.malloc(size_to_alloc);
         if mem.is_null() {
             return mem;
         }
-        let mut p = Chunk::from_mem(mem);
+
+        let mut chunk = Chunk::from_mem(mem);
+        let mut chunk_size = Chunk::size(chunk);
+        let mut prev_in_use = true;
+
+        dlassert!( Chunk::pinuse( chunk) && Chunk::cinuse( chunk) );
+
+        // Make chunk alignment
         if mem as usize & (alignment - 1) != 0 {
             // Here we find an aligned sopt inside the chunk. Since we need to
             // give back leading space in a chunk of at least `min_chunk_size`,
@@ -668,45 +675,46 @@ impl Dlmalloc {
             // we've allocated enough total room so that this is always possible
             let br =
                 Chunk::from_mem(((mem as usize + alignment - 1) & (!alignment + 1)) as *mut u8);
-            let pos = if (br as usize - p as usize) > self.min_chunk_size() {
+            let pos = if (br as usize - chunk as usize) > self.min_chunk_size() {
                 br as *mut u8
             } else {
                 (br as *mut u8).offset(alignment as isize)
             };
-            let newp = pos as *mut Chunk;
-            let leadsize = pos as usize - p as usize;
-            let newsize = Chunk::size(p) - leadsize;
 
-            // for mmapped chunks just adjust the offset
-            if Chunk::mmapped(p) {
-                (*newp).prev_chunk_size = (*p).prev_chunk_size + leadsize;
-                (*newp).head = newsize;
-            } else {
-                // give back the leader, use the rest
-                Chunk::set_inuse(newp, newsize);
-                Chunk::set_inuse(p, leadsize);
-                self.dispose_chunk(p, leadsize);
-            }
-            p = newp;
+            let remainder_size = pos as usize - chunk as usize;
+            let aligned_chunk_size = Chunk::size(chunk) - remainder_size;
+            dlassert!( remainder_size >= self.min_chunk_size() );
+
+            let aligned_chunk = pos as *mut Chunk;
+            (*chunk).head = remainder_size | PINUSE;
+            (*aligned_chunk).prev_chunk_size = remainder_size;
+            self.insert_chunk( chunk, remainder_size);
+
+            chunk = aligned_chunk;
+            chunk_size = aligned_chunk_size;
+            prev_in_use = false;
         }
 
-        // give back spare room at the end
-        if !Chunk::mmapped(p) {
-            let size = Chunk::size(p);
-            if size > nb + self.min_chunk_size() {
-                let remainder_size = size - nb;
-                let remainder = Chunk::plus_offset(p, nb);
-                Chunk::set_inuse(p, nb);
-                Chunk::set_inuse(remainder, remainder_size);
-                self.dispose_chunk(remainder, remainder_size);
-            }
+        if chunk_size > req_chunk_size + self.min_chunk_size() {
+            let remainder_size = chunk_size - req_chunk_size;
+            let remainder = Chunk::plus_offset(chunk, req_chunk_size);
+
+            (*remainder).head = remainder_size | PINUSE | CINUSE;
+            // static_print!("After rem: [{:?}, {:?}]", remainder, remainder_size);
+
+            self.extend_free_chunk(remainder);
+
+            chunk_size = req_chunk_size;
         }
 
-        let mem = Chunk::to_mem(p);
-        dlassert!(Chunk::size(p) >= nb);
-        dlassert!(align_up(mem as usize, alignment) == mem as usize);
-        self.check_inuse_chunk(p);
-        return mem;
+        (*chunk).head = chunk_size | if prev_in_use { PINUSE } else { 0 } | CINUSE;
+
+        let mem_for_request = Chunk::to_mem(chunk);
+        dlassert!( Chunk::size(chunk) >= req_chunk_size );
+        dlassert!( align_up(mem_for_request as usize, alignment) == mem_for_request as usize );
+        self.check_inuse_chunk(chunk);
+
+        return mem_for_request;
     }
 
     // consolidate and bin a chunk, differs from exported versions of free
@@ -1356,6 +1364,7 @@ impl Dlmalloc {
         } else {
             (*next_chunk).head &= !PINUSE;
             (*next_chunk).prev_chunk_size = chunk_size;
+            self.insert_chunk( chunk, chunk_size);
         }
 
         (*chunk).head = chunk_size | PINUSE;
