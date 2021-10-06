@@ -3,6 +3,8 @@ extern crate rand;
 
 use dlmalloc::Dlmalloc;
 use rand::Rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use std::cmp;
 
 #[test]
@@ -26,13 +28,14 @@ fn smoke() {
 #[test]
 fn stress() {
     let mut a = Dlmalloc::new();
+    // let mut rng = StdRng::seed_from_u64(12); //rand::thread_rng();
     let mut rng = rand::thread_rng();
     let mut ptrs = Vec::new();
     let max = if cfg!(test_lots) { 1_000_000 } else { 1_000 };
     unsafe {
         for _ in 0..max {
             let free =
-                ptrs.len() > 0 && ((ptrs.len() < 10_000 && rng.gen_weighted_bool(3)) || rng.gen());
+                ptrs.len() > 0 && ((ptrs.len() < 10_000 && rng.gen_bool(1f64/3f64)) || rng.gen());
             if free {
                 let idx = rng.gen_range(0, ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
@@ -40,7 +43,7 @@ fn stress() {
                 continue;
             }
 
-            if ptrs.len() > 0 && rng.gen_weighted_bool(100) {
+            if ptrs.len() > 0 && rng.gen_bool(1f64/100f64) {
                 let idx = rng.gen_range(0, ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
                 let new_size = if rng.gen() {
@@ -67,13 +70,13 @@ fn stress() {
             } else {
                 rng.gen_range(1, 128 * 1024)
             };
-            let align = if rng.gen_weighted_bool(10) {
+            let align = if rng.gen_bool(1f64/10f64) {
                 1 << rng.gen_range(3, 8)
             } else {
                 8
             };
 
-            let zero = rng.gen_weighted_bool(50);
+            let zero = rng.gen_bool(1f64/50f64);
             let ptr = if zero {
                 a.calloc(size, align)
             } else {
