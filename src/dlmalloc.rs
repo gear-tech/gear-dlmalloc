@@ -15,8 +15,8 @@ use self::alloc::alloc::handle_alloc_error;
 
 use sys;
 
-static DL_CHECKS : bool = true; // cfg!(debug_assertions)
-static DL_VERBOSE : bool = false;
+static DL_CHECKS  : bool = true; // cfg!(debug_assertions)
+static DL_VERBOSE : bool = true;
 
 #[allow(unused)]
 #[cfg(target_os = "linux")]
@@ -664,21 +664,22 @@ impl Dlmalloc {
 
         let mut prev_in_use = if Chunk::pinuse( chunk) { PINUSE } else { 0 };
 
-        let mut chunk_size = new_chunk_size;
-        dlassert!( Chunk::plus_offset(chunk, new_chunk_size) >= Chunk::plus_offset(chunk, new_chunk_size) );
+        let mut chunk_size = Chunk::size(chunk);
+        dlassert!( Chunk::plus_offset(chunk, chunk_size) >= Chunk::plus_offset(new_chunk_pos, new_chunk_size) );
 
         dlverbose!("CROP: original chunk [{:?}, {:x?}]", chunk, chunk_size);
 
         if new_chunk_pos != chunk {
             let remainder_size = new_chunk_pos as usize - chunk as usize;
+            let remainder = chunk;
             dlassert!( remainder_size >= self.min_chunk_size() );
 
             chunk_size -= remainder_size;
 
-            (*chunk).head = remainder_size | prev_in_use;
-            (*new_chunk_pos).prev_chunk_size = remainder_size;
-            self.insert_chunk( chunk, remainder_size);
-            dlverbose!("CROP: before rem [{:?}, {:x?}]", chunk, remainder_size);
+            (*remainder).head = remainder_size | prev_in_use | CINUSE;
+            (*new_chunk_pos).head = CINUSE;
+            self.extend_free_chunk( remainder);
+            dlverbose!("CROP: before rem [{:?}, {:x?}]", remainder, remainder_size);
 
             chunk = new_chunk_pos;
             prev_in_use = 0;
@@ -733,7 +734,7 @@ impl Dlmalloc {
 
         dlassert!( Chunk::pinuse( chunk) && Chunk::cinuse( chunk) );
 
-        // Make chunk alignment
+        let aligned_chunk;
         if mem as usize & (alignment - 1) != 0 {
             // Here we find an aligned sopt inside the chunk. Since we need to
             // give back leading space in a chunk of at least `min_chunk_size`,
@@ -747,36 +748,12 @@ impl Dlmalloc {
             } else {
                 (br as *mut u8).offset(alignment as isize)
             };
-
-            let remainder_size = pos as usize - chunk as usize;
-            let aligned_chunk_size = Chunk::size(chunk) - remainder_size;
-            dlassert!( remainder_size >= self.min_chunk_size() );
-
-            let aligned_chunk = pos as *mut Chunk;
-            (*chunk).head = remainder_size | PINUSE;
-            (*aligned_chunk).prev_chunk_size = remainder_size;
-            self.insert_chunk( chunk, remainder_size);
-            dlverbose!("Before rem: [{:?}, {:x?}]", chunk, remainder_size);
-
-            chunk = aligned_chunk;
-            chunk_size = aligned_chunk_size;
-            prev_in_use = false;
+            aligned_chunk = pos as *mut Chunk;
+        } else {
+            aligned_chunk = chunk;
         }
 
-        if chunk_size > req_chunk_size + self.min_chunk_size() {
-            let remainder_size = chunk_size - req_chunk_size;
-            let remainder = Chunk::plus_offset(chunk, req_chunk_size);
-
-            (*remainder).head = remainder_size | PINUSE | CINUSE;
-            dlverbose!("After rem: [{:?}, {:x?}]", remainder, remainder_size);
-
-            self.extend_free_chunk(remainder);
-
-            chunk_size = req_chunk_size;
-        }
-        dlverbose!("Request chunk: [{:?}, {:x?}]", chunk, chunk_size);
-
-        (*chunk).head = chunk_size | if prev_in_use { PINUSE } else { 0 } | CINUSE;
+        chunk = self.crop_chunk( chunk, aligned_chunk, req_chunk_size);
 
         let mem_for_request = Chunk::to_mem(chunk);
         dlassert!( Chunk::size(chunk) >= req_chunk_size );
