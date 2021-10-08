@@ -28,8 +28,11 @@ fn smoke() {
 #[test]
 fn stress() {
     let mut a = Dlmalloc::new();
-    // let mut rng = StdRng::seed_from_u64(12); //rand::thread_rng();
     let mut rng = rand::thread_rng();
+    let seed: u64 = rng.gen();
+    println!("seed = {}", seed % 1000);
+    let mut rng = StdRng::seed_from_u64(seed % 1000);
+    // let mut rng = StdRng::seed_from_u64(917);
     let mut ptrs = Vec::new();
     let max = if cfg!(test_lots) { 1_000_000 } else { 1_000 };
     unsafe {

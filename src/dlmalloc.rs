@@ -16,7 +16,8 @@ use self::alloc::alloc::handle_alloc_error;
 use sys;
 
 static DL_CHECKS  : bool = true; // cfg!(debug_assertions)
-static DL_VERBOSE : bool = true;
+static DL_VERBOSE : bool = false;
+static PTR_SIZE   : usize = mem::size_of::<usize>();
 
 #[allow(unused)]
 #[cfg(target_os = "linux")]
@@ -444,12 +445,13 @@ impl Dlmalloc {
         if alloced_base.is_null() {
             return alloced_base;
         }
+        dlverbose!("SYS_ALLOC: new mem {:?} 0x{:x}", alloced_base, alloced_size);
 
         self.footprint += alloced_size;
         self.max_footprint = cmp::max(self.max_footprint, self.footprint);
 
         // Append alloced memory in allocator context
-        if self.top.is_null() {
+        if self.seg.base == ptr::null_mut() {
             if self.least_addr.is_null() || alloced_base < self.least_addr {
                 // update least addr when new mem is alloced
                 self.least_addr = alloced_base;
@@ -517,26 +519,72 @@ impl Dlmalloc {
     }
 
     pub unsafe fn realloc(&mut self, oldmem: *mut u8, req_size: usize) -> *mut u8 {
-        // static_print!("KEEEEEEEEEEEEEK");
+        self.check_malloc_state();
+
         if req_size >= self.max_request() {
             return ptr::null_mut();
         }
+
         let req_chunk_size = self.request2size(req_size);
-
         let old_chunk = Chunk::from_mem(oldmem);
+        let old_chunk_size = Chunk::size(old_chunk);
+        let mut chunk = old_chunk;
+        let mut chunk_size = old_chunk_size;
+        let prev_in_use = if Chunk::pinuse(chunk) { PINUSE } else { 0 };
 
-        let newp = self.try_realloc_chunk(old_chunk, req_chunk_size, true);
-        if !newp.is_null() {
-            self.check_inuse_chunk(newp);
-            return Chunk::to_mem(newp);
+        dlverbose!("REALLOC: oldmem={:?} old_mem_size={:x?} req_size={:x?}", oldmem, old_chunk_size - 2 * PTR_SIZE, req_size);
+
+        dlassert!(Chunk::cinuse(chunk));
+
+        if req_chunk_size <= chunk_size {
+            self.crop_chunk(chunk, chunk, req_chunk_size);
+            return oldmem;
+        } else {
+            chunk = self.extend_free_chunk(chunk, false, true);
+            chunk_size = Chunk::size(chunk);
+
+            dlverbose!("REALLOC: extended [{:?}, {:x}]", chunk, chunk_size);
+
+            let chunk_upper_part_size = Chunk::plus_offset(chunk, chunk_size) as usize - old_chunk as usize;
+            if chunk_upper_part_size < req_chunk_size {
+                // TODO: to make malloc we need to mark chunk as cinuse to handle malloc checks
+                dlassert!( !Chunk::cinuse(chunk) );
+                if chunk != self.top && chunk != self.dv {
+                    (*chunk).head |= CINUSE;
+                    Chunk::set_pinuse_for_next(chunk, chunk_size);
+                }
+
+                let new_mem = self.malloc(req_size);
+                if !new_mem.is_null() {
+                    let old_mem_size = old_chunk_size - 2 * mem::size_of::<usize>();
+                    let new_chunk = Chunk::from_mem(new_mem);
+                    let new_mem_size = Chunk::size(new_chunk) - 2 * mem::size_of::<usize>();
+
+                    dlassert!( new_mem_size >= old_mem_size );
+                    ptr::copy_nonoverlapping( oldmem, new_mem, old_mem_size);
+
+                    dlverbose!("REALLOC: make new [{:?}, {:x?}]", new_mem, new_mem_size);
+                }
+
+
+                if chunk != self.top && chunk != self.dv {
+                    (*chunk).head &= !CINUSE;
+                    (*Chunk::next(chunk)).head &= !PINUSE;
+                    self.insert_chunk(chunk, chunk_size);
+                }
+
+                return new_mem;
+            }
+
+            (*chunk).head |= CINUSE;
+            chunk = self.crop_chunk(chunk, old_chunk, req_chunk_size);
+            chunk_size = Chunk::size(chunk);
+
+            dlassert!( chunk_size >= req_chunk_size );
+            dlassert!( chunk == old_chunk );
+
+            return oldmem;
         }
-        let ptr = self.malloc(req_size);
-        if !ptr.is_null() {
-            let oc = Chunk::size(old_chunk) - self.overhead_for(old_chunk);
-            ptr::copy_nonoverlapping(oldmem, ptr, cmp::min(oc, req_size));
-            self.free(oldmem);
-        }
-        return ptr;
     }
 
     unsafe fn try_realloc_chunk(&mut self, chunk: *mut Chunk, req_size: usize, can_move: bool) -> *mut Chunk {
@@ -667,7 +715,7 @@ impl Dlmalloc {
         let mut chunk_size = Chunk::size(chunk);
         dlassert!( Chunk::plus_offset(chunk, chunk_size) >= Chunk::plus_offset(new_chunk_pos, new_chunk_size) );
 
-        dlverbose!("CROP: original chunk [{:?}, {:x?}]", chunk, chunk_size);
+        dlverbose!("CROP: original chunk [{:?}, {:x?}], new [{:?}, {:x?}]", chunk, chunk_size, new_chunk_pos, new_chunk_size);
 
         if new_chunk_pos != chunk {
             let remainder_size = new_chunk_pos as usize - chunk as usize;
@@ -678,7 +726,16 @@ impl Dlmalloc {
 
             (*remainder).head = remainder_size | prev_in_use | CINUSE;
             (*new_chunk_pos).head = CINUSE;
-            self.extend_free_chunk( remainder);
+
+            if chunk == self.top {
+                self.top = new_chunk_pos;
+                self.topsize = chunk_size;
+            } else if chunk == self.dv {
+                self.dv = new_chunk_pos;
+                self.dvsize = chunk_size;
+            }
+
+            self.extend_free_chunk( remainder, true, true);
             dlverbose!("CROP: before rem [{:?}, {:x?}]", remainder, remainder_size);
 
             chunk = new_chunk_pos;
@@ -693,10 +750,30 @@ impl Dlmalloc {
             let remainder = Chunk::plus_offset(chunk, new_chunk_size);
             dlverbose!("CROP: after rem [{:?}, {:x?}]", remainder, remainder_size);
 
-            (*remainder).head = remainder_size | PINUSE | CINUSE;
-            self.extend_free_chunk(remainder);
+            if chunk == self.top {
+                dlassert!( Chunk::cinuse( Chunk::next(chunk)) );
+                self.top = remainder;
+                self.topsize = remainder_size;
+
+                (*self.top).head = self.topsize | PINUSE;
+                (*self.top).head &= !CINUSE;
+                (*Chunk::next(self.top)).head &= !PINUSE;
+            } else if chunk == self.dv {
+                dlassert!( Chunk::cinuse( Chunk::next(chunk)) );
+                self.dv = remainder;
+                self.dvsize = remainder_size;
+
+                (*self.dv).head = self.dvsize | PINUSE;
+                (*self.dv).head &= !CINUSE;
+                (*Chunk::next(self.dv)).head &= !PINUSE;
+            } else {
+                (*remainder).head = remainder_size | PINUSE | CINUSE;
+                self.extend_free_chunk(remainder, true, true);
+            }
 
             chunk_size = new_chunk_size;
+        } else {
+            (*Chunk::next(chunk)).head |= PINUSE;
         }
 
         dlassert!( chunk == new_chunk_pos );
@@ -705,6 +782,14 @@ impl Dlmalloc {
         dlverbose!("CROP: cropped chunk [{:?}, {:x?}]", chunk, chunk_size);
 
         (*chunk).head = chunk_size | prev_in_use | CINUSE;
+
+        if chunk == self.top {
+            self.top = ptr::null_mut();
+            self.topsize = 0;
+        } else if chunk == self.dv {
+            self.dv = ptr::null_mut();
+            self.dvsize = 0;
+        }
 
         return chunk;
     }
@@ -830,7 +915,7 @@ impl Dlmalloc {
         self.top = p;
         self.topsize = size;
         (*p).head = size | PINUSE;
-        (*Chunk::plus_offset(p, size)).head = self.top_foot_size();
+        (*Chunk::plus_offset(p, size)).head = self.top_foot_size() | CINUSE;
         self.trim_check = DEFAULT_TRIM_THRESHOLD;
     }
 
@@ -1355,7 +1440,7 @@ impl Dlmalloc {
         }
     }
 
-    unsafe fn extend_free_chunk(&mut self, mut chunk: *mut Chunk) -> *mut Chunk {
+    unsafe fn extend_free_chunk(&mut self, mut chunk: *mut Chunk, can_insert: bool, can_ext_down: bool) -> *mut Chunk {
         dlassert!( Chunk::cinuse( chunk) );
         dlassert!( chunk != self.top );
         dlassert!( chunk != self.dv );
@@ -1405,14 +1490,16 @@ impl Dlmalloc {
 
                 if chunk == self.dv {
                     self.dvsize = chunk_size;
-                } else {
+                } else if can_insert {
                     self.insert_chunk(chunk, chunk_size);
                 }
             }
         } else {
             (*next_chunk).head &= !PINUSE;
             (*next_chunk).prev_chunk_size = chunk_size;
-            self.insert_chunk( chunk, chunk_size);
+            if can_insert {
+                self.insert_chunk( chunk, chunk_size);
+            }
         }
 
         (*chunk).head = chunk_size | PINUSE;
