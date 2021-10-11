@@ -32,11 +32,12 @@ fn stress() {
     let seed: u64 = rng.gen();
     println!("seed = {}", seed % 1000);
     let mut rng = StdRng::seed_from_u64(seed % 1000);
-    // let mut rng = StdRng::seed_from_u64(917);
+    // let mut rng = StdRng::seed_from_u64(936);
     let mut ptrs = Vec::new();
     let max = if cfg!(test_lots) { 1_000_000 } else { 1_000 };
+    // let max = 1_000_000;
     unsafe {
-        for _ in 0..max {
+        for k in 0..max {
             let free =
                 ptrs.len() > 0 && ((ptrs.len() < 10_000 && rng.gen_bool(1f64/3f64)) || rng.gen());
             if free {
