@@ -18,7 +18,7 @@ use sys;
 static DL_CHECKS  : bool = true; // cfg!(debug_assertions)
 static PTR_SIZE   : usize = mem::size_of::<usize>();
 
-static DL_VERBOSE : bool = false;
+static DL_VERBOSE : bool = true;
 static VERBOSE_DEL: &str = "====================================";
 
 #[allow(unused)]
@@ -466,6 +466,7 @@ impl Dlmalloc {
 
         // Append alloced memory in allocator context
         if self.seg.base == ptr::null_mut() {
+            dlverbose!("SYS_ALLOC: it's newest mem");
             if self.least_addr.is_null() || alloced_base < self.least_addr {
                 // update least addr when new mem is alloced
                 self.least_addr = alloced_base;
@@ -490,6 +491,7 @@ impl Dlmalloc {
             if !seg.is_null()
                 && Segment::holds(seg, self.top as *mut u8)
             {
+                dlverbose!("SYS_ALLOC: find top seg before [{:?}, 0x{:x}], top[{:?}, 0x{:x}]", (*seg).base, (*seg).size, self.top, self.topsize);
                 // If there is and this segment contains top, then add alloced mem
                 // to the segment and increase top size
                 (*seg).size += alloced_size;
@@ -502,6 +504,7 @@ impl Dlmalloc {
                     seg = (*seg).next;
                 }
                 if !seg.is_null() {
+                    dlverbose!("SYS_ALLOC: find seg after [{:?}, 0x{:x}]", (*seg).base, (*seg).size);
                     // If there is one then add the alloced mem to the seg
                     let oldbase = (*seg).base;
                     (*seg).base = alloced_base;
@@ -873,6 +876,8 @@ impl Dlmalloc {
         // size = tsize - 40
         let size = tsize - self.top_foot_size();
         self.init_top(tbase as *mut Chunk, size);
+
+        dlverbose!("SYS_ALLOC: add seg, top[{:?}, 0x{:x}], seginfo[{:?}, 0x{:x}]", self.top, self.topsize, sp, segment_size);
 
         // set up our segment record
         dlassert!(self.is_aligned(ss as usize));
