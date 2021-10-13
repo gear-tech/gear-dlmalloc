@@ -18,7 +18,7 @@ use sys;
 static DL_CHECKS  : bool = true; // cfg!(debug_assertions)
 const PTR_SIZE   : usize = mem::size_of::<usize>();
 
-static DL_VERBOSE : bool = false;
+static DL_VERBOSE : bool = true;
 static VERBOSE_DEL: &str = "====================================";
 
 #[allow(unused)]
@@ -605,11 +605,11 @@ impl Dlmalloc {
                 let tail_value = (*Chunk::plus_offset(chunk, chunk_size)).prev_chunk_size;
 
                 // save begin
-                let mut begin_buff = [0u8; mem::size_of::<TreeChunk>()];
+                let mut begin_buff = [0u8; mem::size_of::<TreeChunk>() - 2 * PTR_SIZE];
                 let begin_buff_size = if self.is_small(chunk_size) {
                     2 * PTR_SIZE
                 } else {
-                    mem::size_of::<TreeChunk>()
+                   cmp::min(mem::size_of::<TreeChunk>() - 2 * PTR_SIZE, old_chunk_size - PTR_SIZE)
                 };
                 ptr::copy(oldmem, &mut begin_buff as *mut u8, begin_buff_size);
 
@@ -629,9 +629,11 @@ impl Dlmalloc {
 
                     ptr::copy(&mut begin_buff as *mut u8, new_mem, begin_buff_size);
 
-                    let old_mem_uncorrupt = oldmem.offset(begin_buff_size as isize);
-                    let new_mem_uncorrupt = new_mem.offset(begin_buff_size as isize);
-                    ptr::copy(old_mem_uncorrupt, new_mem_uncorrupt, old_mem_size - PTR_SIZE - begin_buff_size);
+                    if old_mem_size > PTR_SIZE + begin_buff_size {
+                        let old_mem_uncorrupt = oldmem.offset(begin_buff_size as isize);
+                        let new_mem_uncorrupt = new_mem.offset(begin_buff_size as isize);
+                        ptr::copy(old_mem_uncorrupt, new_mem_uncorrupt, old_mem_size - PTR_SIZE - begin_buff_size);
+                    }
 
                     *(new_mem.offset((old_mem_size - PTR_SIZE) as isize) as *mut usize) = tail_value;
                 }
