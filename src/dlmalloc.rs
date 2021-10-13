@@ -16,9 +16,9 @@ use self::alloc::alloc::handle_alloc_error;
 use sys;
 
 static DL_CHECKS  : bool = true; // cfg!(debug_assertions)
-static PTR_SIZE   : usize = mem::size_of::<usize>();
+const PTR_SIZE   : usize = mem::size_of::<usize>();
 
-static DL_VERBOSE : bool = true;
+static DL_VERBOSE : bool = false;
 static VERBOSE_DEL: &str = "====================================";
 
 #[allow(unused)]
@@ -42,14 +42,17 @@ pub mod ext {
     }
 }
 
-type StaticStr = str_buf::StrBuf::<100>;
+type StaticStr = str_buf::StrBuf::<200>;
 static mut STATIC_BUFFER: StaticStr = StaticStr::new();
+static mut MUTEX : spin::Mutex<i32> = spin::Mutex::new(0);
 macro_rules! static_print {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
+        let lock = MUTEX.lock();
         core::fmt::write( &mut STATIC_BUFFER, format_args!($($arg)*)).unwrap();
         ext::debug( &STATIC_BUFFER, STATIC_BUFFER.len());
         STATIC_BUFFER.set_len(0);
-    }
+        drop(lock);
+    }}
 }
 
 macro_rules! dlverbose {
@@ -465,7 +468,7 @@ impl Dlmalloc {
         self.max_footprint = cmp::max(self.max_footprint, self.footprint);
 
         // Append alloced memory in allocator context
-        if self.seg.base == ptr::null_mut() {
+        if self.seg.base.is_null() {
             dlverbose!("SYS_ALLOC: it's newest mem");
             if self.least_addr.is_null() || alloced_base < self.least_addr {
                 // update least addr when new mem is alloced
@@ -476,8 +479,6 @@ impl Dlmalloc {
             self.seg.flags = flags;
             self.release_checks = MAX_RELEASE_CHECK_RATE;
 
-            // TODO: ??? if top has been removed and then we make it one time more
-            // then we reinit all bins ??
             self.init_small_bins();
 
             let new_top_size = alloced_size - self.top_foot_size();
@@ -549,26 +550,72 @@ impl Dlmalloc {
         let mut chunk_size = old_chunk_size;
 
         dlverbose!( "{}", VERBOSE_DEL);
-        dlverbose!("REALLOC: oldmem={:?} old_mem_size={:x?} req_size={:x?}", oldmem, old_chunk_size - PTR_SIZE, req_size);
+        dlverbose!("REALLOC: oldmem={:?} old_mem_size=0x{:x} req_size=0x{:x}", oldmem, old_chunk_size - PTR_SIZE, req_size);
 
-        dlassert!(Chunk::cinuse(chunk));
+        dlassert!( Chunk::cinuse(chunk) );
 
         if req_chunk_size <= chunk_size {
             self.crop_chunk(chunk, chunk, req_chunk_size);
             return oldmem;
         } else {
+            // Memory in the end of chunk memory can be corrupted in malloc or extend_free_chunk
+            // because any chunk store its prev_chunk_size in prev chunk memory end:
+            //
+            // chunk1 beg  chunk1 end  chunk2 begin
+            // |                   \  /
+            // [-][-][--------------][-][-][------------]
+            //       |                 |
+            //       chunk1 memory     chunk1 memory end
+            //
+            // When chunk1 is free then chunk2 stores chunk1 size in the chunk1 end memory.
+            // When chunk1 is in use then chunk2 do not now chunk1 size and prev_chunk_size cannot be used.
+            //
+            // When chunk is free then supposes that chunk memory isn't used.
+            // So allocator stores there additional information about free chunk.
+            // 1) If chunk is small then we put it to smallbins in corresponding list,
+            // so we have to store prev and next chunk in list:
+            //
+            // chunk beg     prev   next
+            //          \      |   /
+            //           [-][-][-][-]---------------...
+            //                 |
+            //                 chunk memory begin
+            //
+            // 2) If chunk is large then chunk is added to tree and we store all TreeChunk info:
+            //
+            // chunk beg   tree node info begin
+            //          \ /
+            //           {--[------------}------...
+            //              |             \
+            //  chunk memory begin         tree node info end
+
+
             chunk = self.extend_free_chunk(chunk, false, true);
             chunk_size = Chunk::size(chunk);
 
-            dlverbose!("REALLOC: extended chunk[{:?}, {:x}] {}", chunk, chunk_size, self.is_top_or_dv(chunk));
+            dlverbose!("REALLOC: extended chunk[{:?}, 0x{:x}] {}", chunk, chunk_size, self.is_top_or_dv(chunk));
+
+            dlassert!( !Chunk::cinuse(chunk) && Chunk::pinuse(chunk) );
 
             let chunk_upper_part_size = Chunk::plus_offset(chunk, chunk_size) as usize - old_chunk as usize;
             if chunk_upper_part_size < req_chunk_size {
-                // TODO: to make malloc we need to mark chunk as cinuse to handle malloc checks
-                dlassert!( !Chunk::cinuse(chunk) );
+                // In that case we take new chunk using malloc
+
+                // save tail
+                let tail_value = (*Chunk::plus_offset(chunk, chunk_size)).prev_chunk_size;
+
+                // save begin
+                let mut begin_buff = [0u8; mem::size_of::<TreeChunk>()];
+                let begin_buff_size = if self.is_small(chunk_size) {
+                    2 * PTR_SIZE
+                } else {
+                    mem::size_of::<TreeChunk>()
+                };
+                ptr::copy(oldmem, &mut begin_buff as *mut u8, begin_buff_size);
+
                 if chunk != self.top && chunk != self.dv {
-                    (*chunk).head |= CINUSE;
-                    Chunk::set_pinuse_for_next(chunk, chunk_size);
+                    Chunk::set_next_chunk_prev_size(chunk, chunk_size);
+                    self.insert_chunk(chunk, chunk_size);
                 }
 
                 let new_mem = self.malloc(req_size);
@@ -577,20 +624,19 @@ impl Dlmalloc {
                     let new_chunk = Chunk::from_mem(new_mem);
                     let new_mem_size = Chunk::size(new_chunk) - PTR_SIZE;
 
-                    dlverbose!("REALLOC: copy data from [{:?}, {:x?}]", oldmem, old_mem_size);
+                    dlverbose!("REALLOC: copy data from [{:?}, 0x{:x?}] to [{:?}, 0x{:x?}]", oldmem, old_mem_size, new_mem, new_mem_size);
                     dlassert!( new_mem_size >= old_mem_size );
-                    ptr::copy_nonoverlapping( oldmem, new_mem, old_mem_size);
 
-                    dlverbose!("REALLOC: make new [{:?}, {:x?}]", new_mem, new_mem_size);
+                    ptr::copy(&mut begin_buff as *mut u8, new_mem, begin_buff_size);
+
+                    let old_mem_uncorrupt = oldmem.offset(begin_buff_size as isize);
+                    let new_mem_uncorrupt = new_mem.offset(begin_buff_size as isize);
+                    ptr::copy(old_mem_uncorrupt, new_mem_uncorrupt, old_mem_size - PTR_SIZE - begin_buff_size);
+
+                    *(new_mem.offset((old_mem_size - PTR_SIZE) as isize) as *mut usize) = tail_value;
                 }
 
-                if chunk != self.top && chunk != self.dv {
-                    (*chunk).head = chunk_size | PINUSE;
-                    (*Chunk::next(chunk)).head &= !PINUSE;
-                    Chunk::set_next_chunk_prev_size(chunk, chunk_size);
-                    self.insert_chunk(chunk, chunk_size);
-                }
-
+                self.check_malloc_state();
                 return new_mem;
             }
 
@@ -617,7 +663,7 @@ impl Dlmalloc {
         let mut chunk_size = Chunk::size(chunk);
         dlassert!( Chunk::plus_offset(chunk, chunk_size) >= Chunk::plus_offset(new_chunk_pos, new_chunk_size) );
 
-        dlverbose!("CROP: original chunk [{:?}, {:x?}], new [{:?}, {:x?}]", chunk, chunk_size, new_chunk_pos, new_chunk_size);
+        dlverbose!("CROP: original chunk [{:?}, {:x?}], to new [{:?}, {:x?}]", chunk, chunk_size, new_chunk_pos, new_chunk_size);
 
         if new_chunk_pos != chunk {
             let remainder_size = new_chunk_pos as usize - chunk as usize;
@@ -1299,12 +1345,15 @@ impl Dlmalloc {
             let prevsize = (*chunk).prev_chunk_size;
             let prev_chunk = Chunk::minus_offset(chunk, prevsize);
             dlassert!( prev_chunk != self.top );
+            dlassert!( Chunk::pinuse(prev_chunk) );
 
             if prev_chunk == self.dv {
                 self.dvsize += chunk_size;
             } else {
                 self.unlink_chunk(prev_chunk, prevsize);
             }
+
+            dlverbose!("extend: add before chunk[{:?}, 0x{:x}] {}", prev_chunk, prevsize, self.is_top_or_dv(prev_chunk));
 
             chunk_size += prevsize;
             chunk = prev_chunk;
@@ -1313,6 +1362,7 @@ impl Dlmalloc {
         // try to join next chunk
         let next_chunk = Chunk::plus_offset(chunk, chunk_size);
         if !Chunk::cinuse(next_chunk) {
+            dlverbose!("extend: add after chunk[{:?}, 0x{:x}] {}", next_chunk, Chunk::size(next_chunk), self.is_top_or_dv(next_chunk));
             if next_chunk == self.top {
                 self.top = chunk;
                 self.topsize += chunk_size;
@@ -1379,7 +1429,8 @@ impl Dlmalloc {
                 // TODO: chunk for free can be not in use ??
                 dlassert!( false );
                 chunk_size += prevsize + self.mmap_foot_pad();
-                if sys::free((chunk as *mut u8).offset(-(prevsize as isize)), chunk_size) {
+                let (cond, _, _) = sys::free((chunk as *mut u8).offset(-(prevsize as isize)), chunk_size);
+                if cond {
                     self.footprint -= chunk_size;
                 }
                 return;
@@ -1477,7 +1528,9 @@ impl Dlmalloc {
                     if Segment::can_release_part(sp) {
                         if (*sp).size >= extra && !self.has_segment_link(sp) {
                             let newsize = (*sp).size - extra;
-                            if sys::free_part((*sp).base, (*sp).size, newsize) {
+                            dlverbose!("FREE: sys [{:?}, 0x{:x}]", (*sp).base.offset(newsize as isize), (*sp).size - newsize);
+                            let (cond, _, _) = sys::free_part((*sp).base, (*sp).size, newsize);
+                            if cond {
                                 released = extra;
                             }
                         }
@@ -1542,7 +1595,9 @@ impl Dlmalloc {
                     } else {
                         self.unlink_large_chunk(tp);
                     }
-                    if sys::free(base, size) {
+                    dlverbose!("{}", "LOL");
+                    let (cond, _, _) = sys::free(base, size);
+                    if cond {
                         released += size;
                         self.footprint -= size;
                         // unlink our obsolete record

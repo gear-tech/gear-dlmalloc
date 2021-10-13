@@ -28,16 +28,17 @@ pub unsafe fn remap(ptr: *mut u8, oldsize: usize, newsize: usize, can_move: bool
     }
 }
 
-pub unsafe fn free_part(ptr: *mut u8, oldsize: usize, newsize: usize) -> bool {
+pub unsafe fn free_part(ptr: *mut u8, oldsize: usize, newsize: usize) -> (bool, *mut u8, usize) {
     let rc = libc::mremap(ptr as *mut _, oldsize, newsize, 0);
     if rc != libc::MAP_FAILED {
-        return true;
+        return (true, ptr, oldsize - newsize);
     }
-    libc::munmap(ptr.offset(newsize as isize) as *mut _, oldsize - newsize) == 0
+    let cond = libc::munmap(ptr.offset(newsize as isize) as *mut _, oldsize - newsize) == 0;
+    return (cond, ptr, oldsize - newsize);
 }
 
-pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
-    libc::munmap(ptr as *mut _, size) == 0
+pub unsafe fn free(ptr: *mut u8, size: usize) -> (bool, *mut u8, usize) {
+    return (libc::munmap(ptr as *mut _, size) == 0, ptr, size);
 }
 
 pub fn can_release_part(_flags: u32) -> bool {
