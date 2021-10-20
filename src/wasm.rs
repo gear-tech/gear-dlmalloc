@@ -38,7 +38,7 @@ pub unsafe fn free(ptr: *mut u8, size: usize) -> (bool, *mut u8, usize) {
         sys::free(page as _);
     }
 
-    return (true, (first_page * page_size()) as *mut u8, (last_page - first_page) * page_size());
+    return (true, (first_page * page_size()) as *mut u8, (last_page - first_page + 1) * page_size());
 }
 
 pub fn can_release_part(_flags: u32) -> bool {

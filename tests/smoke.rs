@@ -25,27 +25,16 @@ fn smoke() {
     }
 }
 
-// static mut seed : usize = 0;
-
-// #[test]
-// fn many_stress() {
-//     for i in 500..10000 {
-//         unsafe{ seed = i; }
-//         stress();
-//     }
-// }
-
-#[test]
-fn stress() {
+fn run_stress(seed: u64) {
     let mut a = Dlmalloc::new();
-    let mut rng = rand::thread_rng();
-    let seed: u64 = rng.gen();
-    println!("++++++++++++++++++++++ seed = {}\n", seed % 1000);
-    // let mut rng = StdRng::seed_from_u64(seed % 1000);
+
+    println!("++++++++++++++++++++++ seed = {}\n", seed);
     let mut rng = StdRng::seed_from_u64(seed);
+    // let mut rng = StdRng::seed_from_u64(seed);
     // let mut rng = StdRng::seed_from_u64(unsafe {seed} as u64);
+    // let mut rng = StdRng::seed_from_u64(2751);
     let mut ptrs = Vec::new();
-    let max = if cfg!(test_lots) { 1_000_000 } else { 1_000 };
+    let max = if cfg!(test_lots) { 1_000_000 } else { 10_000 };
     // let max = 1_000_0000;
     unsafe {
         for _k in 0..max {
@@ -106,4 +95,19 @@ fn stress() {
             ptrs.push((ptr, size, align));
         }
     }
+}
+
+#[test]
+fn many_stress() {
+    for i in 516..10000 {
+        run_stress(i);
+    }
+}
+
+#[test]
+fn stress() {
+    let mut rng = rand::thread_rng();
+    let seed: u64 = rng.gen();
+    let seed = seed % 10000;
+    run_stress(seed);
 }
