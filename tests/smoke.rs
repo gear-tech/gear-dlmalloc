@@ -30,12 +30,8 @@ fn run_stress(seed: u64) {
 
     println!("++++++++++++++++++++++ seed = {}\n", seed);
     let mut rng = StdRng::seed_from_u64(seed);
-    // let mut rng = StdRng::seed_from_u64(seed);
-    // let mut rng = StdRng::seed_from_u64(unsafe {seed} as u64);
-    // let mut rng = StdRng::seed_from_u64(2751);
     let mut ptrs = Vec::new();
     let max = if cfg!(test_lots) { 1_000_000 } else { 10_000 };
-    // let max = 1_000_0000;
     unsafe {
         for _k in 0..max {
             let free =
