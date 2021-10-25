@@ -37,9 +37,7 @@ static_assertions::const_assert_eq!(8 * PTR_SIZE, SEG_INFO_SIZE);
 static_assertions::const_assert_eq!(DEFAULT_GRANULARITY % MALLIGN, 0);
 static_assertions::const_assert!( MALLIGN > FLAG_BITS );
 
-// TODO: for macos
-#[allow(unused)]
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub mod ext {
     pub fn debug(s: &str, size: usize) {
         libc_print::libc_println!("{}", s);
@@ -425,7 +423,9 @@ impl Dlmalloc {
         dlverbose!( "MALLOC: size = 0x{:x}", size);
         self.print_segments();
         self.check_malloc_state();
-        return self.malloc_internal(size);
+        let mem = self.malloc_internal(size);
+        dlverbose!( "MALLOC: result mem {:?}", mem);
+        return mem;
     }
 
     unsafe fn sys_alloc(&mut self, size: usize) -> *mut u8 {
@@ -1463,6 +1463,7 @@ impl Dlmalloc {
         if before_remainder_size != 0 {
             crop_chunk = mem_to_free.offset( -1 * self.segment_info_size() as isize) as *mut Chunk;
             if (crop_chunk as usize - chunk as usize) < self.min_chunk_size() {
+                // TODO: fix it
                 dlverbose!( "ALLOC FREE: cannot free beacause of left remainder [{:?}, {:?}]", chunk, crop_chunk);
                 Chunk::set_next_chunk_prev_size(chunk, chunk_size);
                 if chunk != self.top && chunk != self.dv {
@@ -1548,6 +1549,7 @@ impl Dlmalloc {
             (*prev_seg).next = next_seg;
         }
 
+        self.print_segments();
         self.check_malloc_state();
     }
 
@@ -1563,8 +1565,25 @@ impl Dlmalloc {
     }
 
     // Dumps
-    unsafe fn print_segments(&mut self)
-    {
+    pub unsafe fn get_alloced_mem_size(&self) -> usize {
+        let mut size: usize = 0;
+        let mut seg = self.seg;
+        while !seg.is_null() {
+            let mut chunk = (*seg).base as *mut Chunk;
+            let last_chunk = Segment::top( seg).offset(-1 * self.segment_info_size() as isize);
+            while (chunk as *mut u8) < last_chunk {
+                if Chunk::cinuse(chunk) {
+                    size += Chunk::size(chunk);
+                }
+                chunk = Chunk::next(chunk);
+            }
+            dlassert!( chunk as *mut u8 == last_chunk );
+            seg = (*seg).next;
+        }
+        return size;
+    }
+
+    unsafe fn print_segments(&mut self) {
         if !DL_VERBOSE {
             return;
         }

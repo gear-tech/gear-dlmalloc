@@ -44,6 +44,7 @@ debug-assertions = true
 
 
 [features]
+default = ["global"]
 # Enable implementations of the `GlobalAlloc` standard library API, exporting a
 # new `GlobalDlmalloc` as well which implements this trait.
 global = []

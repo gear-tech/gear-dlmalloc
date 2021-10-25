@@ -35,6 +35,11 @@ unsafe impl GlobalAlloc for GlobalDlmalloc {
     }
 }
 
+/// Returns malloced size
+pub unsafe fn get_alloced_mem_size() -> usize {
+    return <Dlmalloc>::get_alloced_mem_size(&get());
+}
+
 #[cfg(feature = "allocator-api")]
 unsafe impl Alloc for GlobalDlmalloc {
     #[inline]

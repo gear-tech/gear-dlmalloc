@@ -29,6 +29,9 @@ mod dlmalloc;
 #[cfg(all(feature = "global", not(test)))]
 mod global;
 
+#[cfg(all(feature = "global", not(test)))]
+pub use global::get_alloced_mem_size;
+
 /// An allocator instance
 ///
 /// Instances of this type are used to allocate blocks of memory. For best
@@ -127,6 +130,11 @@ impl Dlmalloc {
             }
             res
         }
+    }
+
+    /// Returns alloced mem size
+    pub unsafe fn get_alloced_mem_size(&self) -> usize {
+        return self.0.get_alloced_mem_size();
     }
 }
 
