@@ -85,10 +85,10 @@ impl Dlmalloc {
     #[inline]
     pub unsafe fn calloc(&mut self, size: usize, align: usize) -> *mut u8 {
         let ptr = self.malloc(size, align);
-        if !ptr.is_null() && self.0.calloc_must_clear(ptr) {
+        if !ptr.is_null() {
             ptr::write_bytes(ptr, 0, size);
         }
-        ptr
+        return ptr;
     }
 
     /// Deallocates a `ptr` with `size` and `align` as the previous request used
