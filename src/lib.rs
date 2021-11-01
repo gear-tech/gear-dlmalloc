@@ -17,6 +17,8 @@
 #![no_std]
 #![deny(missing_docs)]
 
+mod dlverbose;
+
 #[cfg(feature = "allocator-api")]
 use core::alloc::{Alloc, AllocErr, Layout};
 use core::cmp;

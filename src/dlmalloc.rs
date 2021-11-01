@@ -10,18 +10,13 @@ use core::mem;
 use core::ptr;
 use core::ptr::null_mut;
 
-extern crate alloc;
-use crate::dlmalloc;
-
-use self::alloc::alloc::handle_alloc_error;
-
-extern crate static_assertions;
 
 use sys;
+use dlverbose::{DL_CHECKS, DL_VERBOSE, VERBOSE_DEL};
+use crate::dlverbose;
+use crate::dlassert;
 
-static DL_CHECKS   : bool = true; // cfg!(debug_assertions)
-static DL_VERBOSE  : bool = cfg!(feature = "verbose");
-static VERBOSE_DEL : &str = "====================================";
+extern crate static_assertions;
 
 const PTR_SIZE   : usize = mem::size_of::<usize>();
 const MALIGN     : usize = 2 * PTR_SIZE;
@@ -61,62 +56,6 @@ const NSMALLBINS: usize = 32;
 const NTREEBINS: usize = 32;
 const SMALLBIN_SHIFT: usize = 3;
 const TREEBIN_SHIFT: usize = 8;
-
-#[cfg(unix)]
-pub mod ext {
-    pub fn debug(s: &str, size: usize) {
-        libc_print::libc_println!("{}", s);
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub mod ext {
-    mod sys {
-        extern "C" {
-            pub fn gr_debug(msg_ptr: *const u8, msg_len: u32);
-        }
-    }
-
-    pub fn debug(s: &str, size: usize) {
-        unsafe { sys::gr_debug(s.as_ptr(), size as _) }
-    }
-}
-
-type StaticStr = str_buf::StrBuf::<200>;
-static mut STATIC_BUFFER: StaticStr = StaticStr::new();
-static mut MUTEX : spin::Mutex<i32> = spin::Mutex::new(0);
-macro_rules! static_print {
-    ($($arg:tt)*) => {{
-        let lock = MUTEX.lock();
-        core::fmt::write( &mut STATIC_BUFFER, format_args!($($arg)*)).unwrap();
-        ext::debug( &STATIC_BUFFER, STATIC_BUFFER.len());
-        STATIC_BUFFER.set_len(0);
-        drop(lock);
-    }}
-}
-
-macro_rules! dlverbose {
-    ($($arg:tt)*) => {
-        if DL_VERBOSE {
-            static_print!($($arg)*);
-        }
-    }
-}
-
-#[inline(never)]
-unsafe fn dlassert_fn( line: u32)
-{
-    static_print!("ALLOC ASSERT: {}", line);
-    handle_alloc_error( self::alloc::alloc::Layout::new::<u32>() );
-}
-
-macro_rules! dlassert {
-    ($check:expr) => {
-        if DL_CHECKS && !($check) {
-            unsafe{ dlassert_fn(line!()); };
-        }
-    };
-}
 
 /// Allocator context class.
 ///
@@ -175,7 +114,7 @@ macro_rules! dlassert {
 /// segments has size aligned by @DEFAULT_GRANUALITY. So, when we return memory to the system,
 /// we may change segments size or delete some segments or create new segments,
 /// and in all cases we always must satisfy this rule.
-/// Let's see some examples:
+/// Let's see example:
 ///  Segment begin    Default granuality                       Segment end
 ///  |                |               \                                  |
 ///  [================|========(=======|================|====)===========]
@@ -183,7 +122,7 @@ macro_rules! dlassert {
 ///                            Chunk begin                   Chunk end
 ///
 /// Here chunk is free, and we want to return some part of chunk's memory to the system.
-/// To avoid analigned segments, we call system free for only one default granuality part:
+/// To avoid unaligned segments, we call system free for only one granuality part:
 ///
 ///  Segment1                                           Segment
 ///  |                                                  |
@@ -191,14 +130,15 @@ macro_rules! dlassert {
 ///                            |       |                |    |
 ///                       Chunk1    Chunk1 end     Chunk2    Chunk2 end
 ///
-/// Here we create new Segment1 and crop old Segment.
-/// Memory between segments isn't now in allocator context.
-/// Chunk1 and Chunk2 is two free remainders, which is added to tree/smallbins/top,
+/// We create new Segment1 and crop old Segment.
+/// Memory between segments isn't in allocator context now.
+/// Chunk1 and Chunk2 are free remainders, which is added to tree/smallbins/top,
 /// depends on size and context.
 ///
 /// If chunk is not big enought to sys-free something, then it is marked as free
 /// and added to allocator context just like remainders above.
-///
+/// TODO: we also must call free in sys_alloc when one page is excess
+/// TODO: we also must call free in realloc when we free chunk
 ///
 pub struct Dlmalloc {
     smallmap: u32,
