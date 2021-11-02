@@ -10,7 +10,6 @@ use core::mem;
 use core::ptr;
 use core::ptr::null_mut;
 
-
 use sys;
 use dlverbose::{DL_CHECKS, DL_VERBOSE, VERBOSE_DEL};
 use crate::dlverbose;
@@ -18,16 +17,27 @@ use crate::dlassert;
 
 extern crate static_assertions;
 
+/// Pointer size.
 const PTR_SIZE   : usize = mem::size_of::<usize>();
+/// Malloc alignment. TODO: make it one PTR_SIZE ?
 const MALIGN     : usize = 2 * PTR_SIZE;
+/// Chunk struct size
 const CHUNK_SIZE : usize = mem::size_of::<Chunk>();
+/// Segment struct size
 const SEG_SIZE   : usize = mem::size_of::<Segment>();
+/// Chunk memory offset, see more in @Chunk
 const CHUNK_MEM_OFFSET : usize = 2 * PTR_SIZE;
+/// Tree node size
 const TREE_NODE_SIZE : usize = mem::size_of::<TreeChunk>();
+/// Min size which memory chunk in use may have
 const MIN_CHUNK_SIZE : usize = mem::size_of::<Chunk>();
+/// Memory size in min chunk
 const MIN_MEM_SIZE   : usize = MIN_CHUNK_SIZE - PTR_SIZE;
-const SEG_INFO_SIZE  : usize = MALIGN + SEG_SIZE + PTR_SIZE;
-const DEFAULT_GRANULARITY: usize = 64 * 1024; // 64 kByte
+/// Segments info size = size of seg info chunk + border chunk size, see more @Segment
+const SEG_INFO_SIZE  : usize = CHUNK_MEM_OFFSET + SEG_SIZE + PTR_SIZE;
+/// Default granularity is alignment for segments
+const DEFAULT_GRANULARITY: usize = 64 * 1024; // 64 kBytes
+
 static_assertions::const_assert!( 2 * MALIGN == CHUNK_SIZE );
 static_assertions::const_assert!( 3 * PTR_SIZE == SEG_SIZE );
 static_assertions::const_assert!( MIN_CHUNK_SIZE % MALIGN == 0 );
@@ -35,27 +45,123 @@ static_assertions::const_assert!( 6 * PTR_SIZE == SEG_INFO_SIZE );
 static_assertions::const_assert!( SEG_INFO_SIZE % MALIGN == 0 );
 static_assertions::const_assert!( DEFAULT_GRANULARITY % MALIGN == 0 );
 
-// Chunk state flags bits #tag_flag_bits
-// Because size of chunk is always aligned to @MALIGN,
-// so first seweral bits is always null in @Chunk::head.
-// DL allocator use this bits to store information about chunks state.
-// 1) First bit is set when prev chunk in memory is in use
-//    or there is no prev chunk (when chunk is first in segment).
-// 2) Second bit is set when current chunk is in use.
-// 3) Third flag currently used only to identify border chunk (see tag_seg_info)
+/// Prev chunk is in use bit number
 const PINUSE:    usize = 1 << 0;
+/// Current chunk is in use bit number
 const CINUSE:    usize = 1 << 1;
+/// Unused
 const FLAG4:     usize = 1 << 2;
+/// Use flag bits mask
 const INUSE:     usize = PINUSE | CINUSE;
+/// All flag bits mask
 const FLAG_BITS: usize = PINUSE | CINUSE | FLAG4;
+/// Mask which border chunk has as head
 const BORDER_CHUNK_HEAD: usize = FLAG_BITS;
+
 static_assertions::const_assert!( MALIGN > FLAG_BITS );
 
-// TODO: document this
+/// Number of small bins.
 const NSMALLBINS: usize = 32;
+/// Number of tree bins.
 const NTREEBINS: usize = 32;
+/// We use it to identify corresponding small bin for chunk, see @small_size
 const SMALLBIN_SHIFT: usize = 3;
+/// We use it to identify corresponding tree bin for chunk, see @compute_tree_index
 const TREEBIN_SHIFT: usize = 8;
+
+/// Dl allocator uses memory non-overlapping intervals for each request - here named Chunks.
+///
+/// Each chunk can be in two states: in use and free.
+/// When chunk is un use, its memory can be read/written by somebody.
+/// When chunk is free, we can use it for new malloc requests and make it in use.
+/// Chunk info is stored in memory just before memory for request:
+///
+/// chunk beg       head
+///          \     /
+///           [-][-][-----------------]
+///           /      \
+/// prev_chunk_size   chunk memory begin = chunk beg + @CHUNK_MEM_OFFSET
+///
+/// When chunk is free then we suppose that chunk memory isn't used.
+/// So allocator stores there additional information about free chunk.
+/// If chunk is small then we put it to smallbins in corresponding list,
+/// so we have to store ptrs to prev and next chunk in list:
+///
+/// chunk beg   prev      next
+///          \      \    /
+///           [-][-][-][-]---------------]
+///                 |
+///                 chunk memory begin
+///
+/// If chunk isn't small then we store there tree node information also,
+/// see @TreeChunk.
+///
+/// All algorithms in allocator constructed so that they do not use
+/// @Chunk::prev_chunk_size, if prev chunk is in use.
+/// So, we can use next chunk begin for current chunk memory:
+///
+/// chunk1 beg            chunk1 end    chunk2 beg
+///          \                      \  /
+///           [-][-][----------------][-][-][-------------]
+///                 |                    \
+///                 chunk1 mem beg        chunk1 mem end
+///
+/// As you can see, chunks never ovelap, but chunk memory can
+/// overlap next chunk.
+/// Because of this overlapping chunk memory size == chunk size - @PTR_SIZE.
+/// So, in best case chunk info memory overhead for requested by malloc memory
+/// is one @PTR_SIZE.
+///
+/// @Chunk::head is only one field which must be correct for chunk in both states.
+/// In that field we store current chunk size and chunk flag bits.
+/// First seweral bits is always zero in chunk size
+/// because size of chunk is always aligned to @MALIGN.
+/// So, in @Chunk::head we use left bits for size and right bits for flags, see @FLAG_BITS.
+/// 1) First bit is set when prev chunk in memory is in use
+///    or if there is no prev chunk (when chunk is first in segment).
+/// 2) Second bit is set when current chunk is in use.
+/// 3) Third flag currently used only to identify border chunk (see @Segment)
+#[repr(C)]
+struct Chunk {
+    prev_chunk_size: usize,
+    head: usize,
+    prev: *mut Chunk,
+    next: *mut Chunk,
+}
+
+/// It's structure to store large chunks in tree.
+/// This structure is stored in chunk memory, when large chunk is free:
+///
+/// chunk beg  chunk info end        chunk end
+///          \     |                /
+///           [----]-------]-------]
+///          /              \
+/// tree node info begin     tree node info end
+///
+/// As you can see @TreeChunk has common @Chunk inside and
+/// also has pointers to left and right childs.
+/// @Chunk also has pointers @Chunk::next and @Chunk::prev.
+/// Why so many pointers ?
+/// Because tree node is a list of same size chunks:
+///                           ||
+///                         chunk1
+///                        /      \
+///                     chunk2 -- chunk3
+///                   //              \\
+///                  //              chunk6
+///                chunk4             //
+///                 (  )            ...
+///                chunk5
+///                //  \\
+///               ...   ...
+///
+#[repr(C)]
+struct TreeChunk {
+    chunk: Chunk,
+    child: [*mut TreeChunk; 2],
+    parent: *mut TreeChunk,
+    index: u32,
+}
 
 /// Allocator context class.
 ///
@@ -150,7 +256,8 @@ pub struct Dlmalloc {
     dv: *mut Chunk,
     top: *mut Chunk,
     seg: *mut Segment,
-    least_addr: *mut u8,    // only for checks
+    /// The least allocated addr in self live (for checks only)
+    least_addr: *mut u8,
 }
 
 unsafe impl Send for Dlmalloc {}
@@ -169,22 +276,6 @@ pub const DLMALLOC_INIT: Dlmalloc = Dlmalloc {
 };
 
 #[repr(C)]
-struct Chunk {
-    prev_chunk_size: usize,
-    head: usize,
-    prev: *mut Chunk,
-    next: *mut Chunk,
-}
-
-#[repr(C)]
-struct TreeChunk {
-    chunk: Chunk,
-    child: [*mut TreeChunk; 2],
-    parent: *mut TreeChunk,
-    index: u32,
-}
-
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct Segment {
     base: *mut u8,
@@ -192,7 +283,7 @@ struct Segment {
     next: *mut Segment,
 }
 
-/// Returns min number which >= a and is aligned to @alignment
+/// Returns min number which >= a and which is aligned by @alignment
 fn align_up(a: usize, alignment: usize) -> usize {
     dlassert!( alignment.is_power_of_two() );
     return (a + (alignment - 1)) & !(alignment - 1);
@@ -501,16 +592,6 @@ impl Dlmalloc {
             // When chunk1 is free, then chunk2 stores chunk1 size in the chunk1 end memory.
             // When chunk1 is in use then chunk2 do not now chunk1 size and prev_chunk_size cannot be used.
             //
-            // When chunk is free then supposes that chunk memory isn't used.
-            // So allocator stores there additional information about free chunk.
-            // 1) If chunk is small then we put it to smallbins in corresponding list,
-            // so we have to store prev and next chunk in list:
-            //
-            // chunk beg     prev   next
-            //          \      |   /
-            //           [-][-][-][-]---------------...
-            //                 |
-            //                 chunk memory begin
             //
             // 2) If chunk is large then chunk is added to tree and we store all TreeChunk info:
             //

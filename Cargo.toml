@@ -46,4 +46,4 @@ verbose = []
 
 # Enable experimental support for the standard library's unstable allocator API.
 allocator-api = []
-rustc-dep-of-std = ['core', 'compiler_builtins/rustc-dep-of-std']
+# rustc-dep-of-std = ['core', 'compiler_builtins/rustc-dep-of-std']
