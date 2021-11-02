@@ -42,8 +42,6 @@ global = []
 
 # Enable very expensive debug checks in this crate
 debug = []
-verbose = []
 
-# Enable experimental support for the standard library's unstable allocator API.
-allocator-api = []
-# rustc-dep-of-std = ['core', 'compiler_builtins/rustc-dep-of-std']
+# Verbose allocator work actions
+verbose = []

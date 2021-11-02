@@ -1,6 +1,6 @@
 use core::fmt::Arguments;
 
-pub static DL_CHECKS   : bool = true; // cfg!(debug_assertions)
+pub static DL_CHECKS   : bool = cfg!(feature = "debug");
 pub static DL_VERBOSE  : bool = cfg!(feature = "verbose");
 pub static VERBOSE_DEL : &str = "====================================";
 
