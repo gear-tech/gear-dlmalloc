@@ -1613,7 +1613,7 @@ impl Dlmalloc {
         }
         let mut i = 0;
         let mut seg = self.seg;
-        while !seg.is_null() && !(*seg).base.is_null() {
+        while !seg.is_null() {
             i += 1;
             dlverbose!("+++++++ SEG{} {:?} [{:?}, {:?}]", i, seg, (*seg).base, Segment::top(seg));
             let mut chunk = (*seg).base as *mut Chunk;

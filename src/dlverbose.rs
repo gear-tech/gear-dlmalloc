@@ -28,18 +28,14 @@ type StaticStr = str_buf::StrBuf::<200>;
 /// Static out buffer - we use it to avoid memory allocations,
 /// when something is printed inside allocator code.
 static mut OUT_BUFFER: StaticStr = StaticStr::new();
-/// Makes access to @OUT_BUFFER thread safe
-static mut MUTEX : spin::Mutex<i32> = spin::Mutex::new(0);
 
 /// Prints string with args.
 /// What is the out stream defines in @ext module.
 #[inline(never)]
 pub unsafe fn dlprint_fn(args: Arguments<'_>) {
-    let lock = MUTEX.lock();
     core::fmt::write( &mut OUT_BUFFER, args).unwrap();
     ext::debug( &OUT_BUFFER, OUT_BUFFER.len());
     OUT_BUFFER.set_len(0);
-    drop(lock);
 }
 
 /// Prints string with args if @DL_VERBOSE is set.
