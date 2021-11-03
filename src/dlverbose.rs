@@ -43,7 +43,7 @@ pub unsafe fn dlprint_fn(args: Arguments<'_>) {
 #[macro_export]
 macro_rules! dlverbose {
     ($($arg:tt)*) => {
-        if DL_VERBOSE {
+        if crate::dlverbose::DL_VERBOSE {
             crate::dlverbose::dlprint_fn(format_args!($($arg)*))
         }
     }

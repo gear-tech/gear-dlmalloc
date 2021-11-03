@@ -25,7 +25,7 @@ const MALIGN     : usize = 2 * PTR_SIZE;
 const CHUNK_SIZE : usize = mem::size_of::<Chunk>();
 /// Segment struct size
 const SEG_SIZE   : usize = mem::size_of::<Segment>();
-/// Chunk memory offset, see more in @Chunk
+/// Chunk memory offset, see more in [Chunk]
 const CHUNK_MEM_OFFSET : usize = 2 * PTR_SIZE;
 /// Tree node size
 const TREE_NODE_SIZE : usize = mem::size_of::<TreeChunk>();
@@ -33,7 +33,7 @@ const TREE_NODE_SIZE : usize = mem::size_of::<TreeChunk>();
 const MIN_CHUNK_SIZE : usize = mem::size_of::<Chunk>();
 /// Memory size in min chunk
 const MIN_MEM_SIZE   : usize = MIN_CHUNK_SIZE - PTR_SIZE;
-/// Segments info size = size of seg info chunk + border chunk size, see more @Segment
+/// Segments info size = size of seg info chunk + border chunk size, see more [Segment]
 const SEG_INFO_SIZE  : usize = CHUNK_MEM_OFFSET + SEG_SIZE + PTR_SIZE;
 /// Default granularity is alignment for segments
 const DEFAULT_GRANULARITY: usize = 64 * 1024; // 64 kBytes
@@ -55,7 +55,7 @@ const FLAG4:     usize = 1 << 2;
 const INUSE:     usize = PINUSE | CINUSE;
 /// All flag bits mask
 const FLAG_BITS: usize = PINUSE | CINUSE | FLAG4;
-/// Mask which border chunk has as head
+/// Mask which is border chunk head
 const BORDER_CHUNK_HEAD: usize = FLAG_BITS;
 
 static_assertions::const_assert!( MALIGN > FLAG_BITS );
@@ -64,9 +64,9 @@ static_assertions::const_assert!( MALIGN > FLAG_BITS );
 const NSMALLBINS: usize = 32;
 /// Number of tree bins.
 const NTREEBINS: usize = 32;
-/// We use it to identify corresponding small bin for chunk, see @small_size
+/// We use it to identify corresponding small bin for chunk, see [Dlmalloc::small_size]
 const SMALLBIN_SHIFT: usize = 3;
-/// We use it to identify corresponding tree bin for chunk, see @compute_tree_index
+/// We use it to identify corresponding tree bin for chunk, see [Dlmalloc::compute_tree_index]
 const TREEBIN_SHIFT: usize = 8;
 
 /// Dl allocator uses memory non-overlapping intervals for each request - here named Chunks.
@@ -75,186 +75,199 @@ const TREEBIN_SHIFT: usize = 8;
 /// When chunk is un use, its memory can be read/written by somebody.
 /// When chunk is free, we can use it for new malloc requests and make it in use.
 /// Chunk info is stored in memory just before memory for request:
-///
+/// ````
 /// chunk beg       head
 ///          \     /
 ///           [-][-][-----------------]
 ///           /      \
-/// prev_chunk_size   chunk memory begin = chunk beg + @CHUNK_MEM_OFFSET
-///
+/// prev_chunk_size   chunk memory begin = chunk beg + CHUNK_MEM_OFFSET
+/// ````
 /// When chunk is free then we suppose that chunk memory isn't used.
 /// So allocator stores there additional information about free chunk.
 /// If chunk is small then we put it to smallbins in corresponding list,
 /// so we have to store ptrs to prev and next chunk in list:
-///
-/// chunk beg   prev      next
-///          \      \    /
-///           [-][-][-][-]---------------]
-///                 |
-///                 chunk memory begin
-///
+/// ````
+///  chunk beg   prev      next
+///           \      \    /
+///            [-][-][-][-]---------------]
+///                  |
+///                  chunk memory begin
+/// ````
 /// If chunk isn't small then we store there tree node information also,
-/// see @TreeChunk.
+/// see [TreeChunk].
 ///
 /// All algorithms in allocator constructed so that they do not use
-/// @Chunk::prev_chunk_size, if prev chunk is in use.
+/// [Chunk::prev_chunk_size], if prev chunk is in use.
 /// So, we can use next chunk begin for current chunk memory:
-///
+/// ````
 /// chunk1 beg            chunk1 end    chunk2 beg
 ///          \                      \  /
 ///           [-][-][----------------][-][-][-------------]
 ///                 |                    \
 ///                 chunk1 mem beg        chunk1 mem end
-///
+/// ````
 /// As you can see, chunks never ovelap, but chunk memory can
 /// overlap next chunk.
-/// Because of this overlapping chunk memory size == chunk size - @PTR_SIZE.
+/// Because of this overlapping chunk memory size == chunk size - [PTR_SIZE].
 /// So, in best case chunk info memory overhead for requested by malloc memory
-/// is one @PTR_SIZE.
+/// is one [PTR_SIZE].
 ///
-/// @Chunk::head is only one field which must be correct for chunk in both states.
+/// [Chunk::head] is only one field which must be correct for chunk in both states.
 /// In that field we store current chunk size and chunk flag bits.
 /// First seweral bits is always zero in chunk size
-/// because size of chunk is always aligned to @MALIGN.
-/// So, in @Chunk::head we use left bits for size and right bits for flags, see @FLAG_BITS.
+/// because size of chunk is always aligned to [MALIGN].
+/// So, in [Chunk::head] we use left bits for size and right bits for flags, see [FLAG_BITS].
 /// 1) First bit is set when prev chunk in memory is in use
 ///    or if there is no prev chunk (when chunk is first in segment).
 /// 2) Second bit is set when current chunk is in use.
-/// 3) Third flag currently used only to identify border chunk (see @Segment)
+/// 3) Third flag currently used only to identify border chunk (see [Segment])
 #[repr(C)]
 struct Chunk {
+    /// Prev in mem chunk size
     prev_chunk_size: usize,
+    /// This chunk size and flag bits
     head: usize,
+    /// Prev chunk in list
     prev: *mut Chunk,
+    /// Next chunk in list
     next: *mut Chunk,
 }
 
 /// It's structure to store large chunks in tree.
 /// This structure is stored in chunk memory, when large chunk is free:
-///
+/// ````
 /// chunk beg  chunk info end        chunk end
 ///          \     |                /
 ///           [----]-------]-------]
 ///          /              \
 /// tree node info begin     tree node info end
-///
-/// As you can see @TreeChunk has common @Chunk inside and
+/// ````
+/// As you can see [TreeChunk] has common [Chunk] inside and
 /// also has pointers to left and right childs.
-/// @Chunk also has pointers @Chunk::next and @Chunk::prev.
+/// [Chunk] also has pointers [Chunk::next] and [Chunk::prev].
 /// Why so many pointers ?
 /// Because tree node is a list of same size chunks:
+/// ````
 ///                           ||
 ///                         chunk1
 ///                        /      \
 ///                     chunk2 -- chunk3
-///                   //              \\
-///                  //              chunk6
-///                chunk4             //
-///                 (  )            ...
-///                chunk5
-///                //  \\
-///               ...   ...
+///                     //           \\
+///                    //           chunk6
+///                 chunk4            //
+///                  (  )            ...
+///                 chunk5
+///                 //  \\
+///               ...    ...
+/// ````
+/// Each tree holding treenodes is a tree of unique chunk sizes.  Chunks
+/// of the same size are arranged in a circularly-linked list, with only
+/// the oldest chunk (the next to be used, in our FIFO ordering)
+/// actually in the tree.  (Tree members are distinguished by a non-null
+/// parent pointer.)  If a chunk with the same size an an existing node
+/// is inserted, it is linked off the existing node using pointers that
+/// work in the same way as fd/bk pointers of small chunks.
 ///
+/// Each tree contains a power of 2 sized range of chunk sizes (the
+/// smallest is 0x100 <= x < 0x180), which is is divided in half at each
+/// tree level, with the chunks in the smaller half of the range (0x100
+/// <= x < 0x140 for the top nose) in the left subtree and the larger
+/// half (0x140 <= x < 0x180) in the right subtree.  This is, of course,
+/// done by inspecting individual bits.
+///
+/// Using these rules, each node's left subtree contains all smaller
+/// sizes than its right subtree.  However, the node at the root of each
+/// subtree has no particular ordering relationship to either.  (The
+/// dividing line between the subtree sizes is based on trie relation.)
+/// If we remove the last chunk of a given size from the interior of the
+/// tree, we need to replace it with a leaf node.  The tree ordering
+/// rules permit a node to be replaced by any leaf below it.
+///
+/// The smallest chunk in a tree (a common operation in a best-fit
+/// allocator) can be found by walking a path to the leftmost leaf in
+/// the tree.  Unlike a usual binary tree, where we follow left child
+/// pointers until we reach a null, here we follow the right child
+/// pointer any time the left one is null, until we reach a leaf with
+/// both child pointers null. The smallest chunk in the tree will be
+/// somewhere along that path.
+///
+/// The worst case number of steps to add, find, or remove a node is
+/// bounded by the number of bits differentiating chunks within
+/// bins. Under current bin calculations, this ranges from 6 up to 21
+/// (for 32 bit sizes) or up to 53 (for 64 bit sizes). The typical case
+/// is of course much better.
 #[repr(C)]
 struct TreeChunk {
+    /// This chunk
     chunk: Chunk,
+    /// Left and right childs in tree
     child: [*mut TreeChunk; 2],
+    /// Parent in tree
     parent: *mut TreeChunk,
+    /// Tree index in Dlmalloc::treebins
     index: u32,
 }
 
-/// Allocator context class.
+/// Segment is a big memory interval aligned by [DEFAULT_GRANULARITY]
+/// Segment info stored inside segment memory in the end:
+/// ````
+///                               Border chunk begin    Border chunk end
+///                                                \       /   and seg end
+///  [-----------------------------------][----(----][--)--]
+///  |                                   /      \        \
+///  Segment begin     Seg info chunk beg    Seg info beg \
+///                                                       Seg info end
+/// ````
+/// So, in the end of segment we have two chunks.
+/// First is segment info chunk. We store segment info in its memory.
+/// This chunk is always in use.
+/// Second is border chunk. This chunk has [BORDER_CHUNK_HEAD] as head
+/// and it's never used, except checks.
 ///
-/// Malloc algorithm description.
-/// In first memory allocation - we have no available memory in allocator context.
-/// So, we request system for memory interval aligned by @DEFAULT_GRANUALITY.
-/// This memory is added as segment in segments list, head is @Dlmalloc::seg.
-/// see more in @Dlmalloc::sys_alloc
-/// So, after that there is some available memory in allocator context.
-/// Algorithm has four ways how to allocate requested mem using available segments:
-/// 1) Use top chunk: @Dlmalloc::top and @Dlmalloc::topsize.
-///    Top chunk has the biggest addr between all other chunks in same segment.
-///    It is created when new segment is alloced from system.
-///    Then all memory from segment is gived to top.
-///    Old top (if there is one) in that case became common chunk.
-/// 2) Use dv chunk: @Dlmalloc::dv and @Dlmalloc::dvsize.
-///    Dv chunk is created when some bigger size chunk is used to allocate
-///    small chunk. Then remainder bacame dv (except if it is top, top stay top).
-/// 3) Use tree: @Dlmalloc::treemap and @Dlmalloc::treebins.
-///    All big chunks (see tag_big_chunk), which is created during allocator work,
-///    are saved in tree. In fact it is @NTREEBINS number of trees, where each tree
-///    is for corresponding size range. Each tree is sorted by size binary tree.
-/// 4) Use smallbins: @Dlmalloc::smallbins and @Dlmalloc::smallmap.
-///    Each smallbin is list of chunks have equal small size:
-///    zero bin is for less then 8 bytes (never used), first for 8, second for 16, 24, 32 and e.t.c.
-///    Note: some bins is never used, it depends on @PTR_SIZE value.
-///    TODO: fix it, see also @Dlmalloc::small_index.
-/// All these ways have following priority:
-/// 1) if there is small bin with exatly same size as requested, then use it.
-/// 2) use dv chunk if can
-/// 4) use most suitable chunk from smallbins if can
-/// 3) use chunks from tree if can
-/// 4) use top chunk if can
-/// 5) if all ways above do not works then alloc new memory from system.
+/// [SEG_INFO_SIZE] is sum of border and info chunks sizes.
 ///
-/// Memalign description.
-/// When user want alignment which is bigger then @MALIGN,
-/// then allocator just use malloc for bigger than requested size.
-/// After that we crop malloced chunk, so that return memory is aligned as need.
-/// Remainder is stored in smallbins or tree.
+/// In allocator context segments are stored in a linked list.
+/// So, segment info has field [Segment::next],
+/// which points to the next segment in list.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Segment {
+    /// Segment begin addr
+    base: *mut u8,
+    /// Segment size
+    size: usize,
+    /// Next segment in list
+    next: *mut Segment,
+}
+
+/// Allocator context.
 ///
-/// Realloc description.
-/// If new requested size is less then old size,
-/// then just crops existen chunk and returns it.
-/// In other case checks whether existen chunk can be extended up, so that new
-/// chunk size will be bigger then requested.
-/// If so, then extends it and crops to requested size.
-/// In other case we need other chunk which have suit size, so malloc is used.
-/// All data from old chunk copied to new.
-///
-/// Free description.
-/// When user call allocator to free mem, in our context it means - free one chunk.
-/// There can be already free neighbor chunks, so we extend our chunk
-/// to all free chunks around. Then if chunk is big enought we can return some memory to system.
-/// To understand what memory can be returned to system, you should now one simple rule:
-/// segments has size aligned by @DEFAULT_GRANUALITY. So, when we return memory to the system,
-/// we may change segments size or delete some segments or create new segments,
-/// and in all cases we always must satisfy this rule.
-/// Let's see example:
-///  Segment begin    Default granuality                       Segment end
-///  |                |               \                                  |
-///  [================|========(=======|================|====)===========]
-///                            |                             |
-///                            Chunk begin                   Chunk end
-///
-/// Here chunk is free, and we want to return some part of chunk's memory to the system.
-/// To avoid unaligned segments, we call system free for only one granuality part:
-///
-///  Segment1                                           Segment
-///  |                                                  |
-///  [================|========(=======]                [====)===========]
-///                            |       |                |    |
-///                       Chunk1    Chunk1 end     Chunk2    Chunk2 end
-///
-/// We create new Segment1 and crop old Segment.
-/// Memory between segments isn't in allocator context now.
-/// Chunk1 and Chunk2 are free remainders, which is added to tree/smallbins/top,
-/// depends on size and context.
-///
-/// If chunk is not big enought to sys-free something, then it is marked as free
-/// and added to allocator context just like remainders above.
-/// TODO: we also must call free in sys_alloc when one page is excess
-/// TODO: we also must call free in realloc when we free chunk
+/// Main items:
+/// * Data types - see [Chunk], [Segment], [TreeChunk]
+/// * Malloc   - see [Dlmalloc::malloc]
+/// * Memalign - see [Dlmalloc::memalign]
+/// * Realloc  - see [Dlmalloc::realloc].
+/// * Free     - see [Dlmalloc::free].
 ///
 pub struct Dlmalloc {
+    /// Mask of available [smallbins]
     smallmap: u32,
+    /// Mask of available [treebins]
     treemap: u32,
+    /// First chunks in small chunks lists, one list for each small size.
     smallbins: [*mut Chunk; (NSMALLBINS + 1) * 2],
+    /// Pointers to roots of large chunks trees.
     treebins: [*mut TreeChunk; NTREEBINS],
+    /// [dv] chunk size
     dvsize: usize,
+    /// [top] chunk size
     topsize: usize,
+    /// [dv] is special chunk, see more in [Dlmalloc::malloc]
     dv: *mut Chunk,
+    /// [top] is special chunk, see more in [Dlmalloc:malloc]
     top: *mut Chunk,
+    /// Pointer to the first segment in segments list.
+    /// Null if list is empty.
     seg: *mut Segment,
     /// The least allocated addr in self live (for checks only)
     least_addr: *mut u8,
@@ -275,15 +288,7 @@ pub const DLMALLOC_INIT: Dlmalloc = Dlmalloc {
     least_addr: 0 as *mut _,
 };
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Segment {
-    base: *mut u8,
-    size: usize,
-    next: *mut Segment,
-}
-
-/// Returns min number which >= a and which is aligned by @alignment
+/// Returns min number which >= a and which is aligned by `alignment`
 fn align_up(a: usize, alignment: usize) -> usize {
     dlassert!( alignment.is_power_of_two() );
     return (a + (alignment - 1)) & !(alignment - 1);
@@ -326,13 +331,13 @@ impl Dlmalloc {
         return self.max_request() + PTR_SIZE;
     }
 
-    // TODO: we do not use ptr size here - fix it
-    /// Returns index for chunk in small bins, see tag_small_bins
+    /// Returns index for chunk in small bins, see tag_small_bins.
+    /// TODO: we do not use ptr size here - fix it
     fn small_index(&self, chunk_size: usize) -> u32 {
         return (chunk_size >> SMALLBIN_SHIFT) as u32;
     }
 
-    /// Returns size of chunks in small_bin by @idx, see tag_small_bins
+    /// Returns size of chunks in small_bin by `idx`, see tag_small_bins
     fn small_index2size(&self, idx: u32) -> usize {
         return (idx as usize) << SMALLBIN_SHIFT;
     }
@@ -352,7 +357,7 @@ impl Dlmalloc {
         }
     }
 
-    /// If there is chunk in tree/smallbins/top/dv which has size >= @chunk_size,
+    /// If there is chunk in tree/smallbins/top/dv which has size >= `chunk_size`,
     /// then returns most suitable chunk, else return null.
     unsafe fn malloc_chunk_by_size(&mut self, chunk_size: usize) -> *mut Chunk {
         if self.is_chunk_small(chunk_size) {
@@ -391,11 +396,11 @@ impl Dlmalloc {
 
                     // TODO: mem::size_of::<usize>() != 4 why ???
                     if mem::size_of::<usize>() != 4 && remainder_size < MIN_CHUNK_SIZE {
-                        // Use all size in @chunk_for_request
+                        // Use all size in @chunk
                         (*chunk).head = smallsize | PINUSE | CINUSE;
                         (*Chunk::next(chunk)).head |= PINUSE;
                     } else {
-                        // In other case use lower part of @chunk_for_request
+                        // In other case use lower part of @chunk
                         (*chunk).head = chunk_size | PINUSE | CINUSE;
 
                         // set remainder as dv
@@ -448,7 +453,7 @@ impl Dlmalloc {
         return ptr::null_mut();
     }
 
-    /// Malloc func for internal usage, see more in @malloc
+    /// Malloc func for internal usage, see more in `malloc`
     unsafe fn malloc_internal(&mut self, size: usize) -> *mut u8 {
         let chunk_size = self.mem_to_chunk_size(size);
         let chunk = self.malloc_chunk_by_size(chunk_size);
@@ -461,9 +466,37 @@ impl Dlmalloc {
         return mem;
     }
 
-    /// Allocates memory interval which has size > @size (bigger because of chunk overhead).
-    /// If there is a chunk, which has size bigger then @size, then returns its memory.
-    /// In other case allocates new pages using @sys_alloc
+    /// Allocates memory interval which has size > `size` (bigger because of chunk overhead).
+    /// In first memory allocation we have no available memory in allocator context.
+    /// So, we request system for memory interval aligned by [DEFAULT_GRANULARITY].
+    /// This memory is added as segment in segments list, head is [Dlmalloc::seg].
+    /// see more in [Dlmalloc::sys_alloc]
+    /// So, after that there is some available memory in allocator context.
+    /// Algorithm has four ways how to allocate requested mem using available segments:
+    /// 1) Use top chunk: [Dlmalloc::top] and [Dlmalloc::topsize].
+    ///    Top chunk has the biggest addr between all other chunks in same segment.
+    ///    It is created when new segment is alloced from system.
+    ///    All memory from new segment becames to be top.
+    ///    Old top (if there is one) in that case becames to be common chunk.
+    /// 2) Use dv chunk: [Dlmalloc::dv] and [Dlmalloc::dvsize].
+    ///    Dv chunk is created when some bigger size chunk is used to allocate
+    ///    small chunk. Then remainder bacame dv (except if it is top, top stay top).
+    /// 3) Use tree: [Dlmalloc::treemap] and [Dlmalloc::treebins].
+    ///    All big chunks (see tag_big_chunk), which is created during allocator work,
+    ///    are saved in tree. In fact it is [NTREEBINS] number of trees, where each tree
+    ///    is for corresponding size range. Each tree is sorted by size binary tree.
+    /// 4) Use smallbins: [Dlmalloc::smallbins] and [Dlmalloc::smallmap].
+    ///    Each smallbin is list of chunks have equal small size:
+    ///    zero bin is for less then 8 bytes (never used), first for 8, second for 16, 24, 32 and e.t.c.
+    ///    Note: some bins is never used, it depends on [PTR_SIZE] value.
+    ///    TODO: fix it, see also [Dlmalloc::small_index].
+    /// All these ways have following priority:
+    /// 1) if there is small bin with exatly same size as requested, then use it
+    /// 2) use dv chunk if can
+    /// 3) use most suitable chunk from smallbins if can
+    /// 4) use chunks from tree if can
+    /// 5) use top chunk if can
+    /// 6) if all ways above do not works then alloc new memory from system.
     pub unsafe fn malloc(&mut self, size: usize) -> *mut u8 {
         dlverbose!( "{}", VERBOSE_DEL);
         dlverbose!( "MALLOC CALL: size = 0x{:x}", size);
@@ -475,7 +508,7 @@ impl Dlmalloc {
     }
 
     /// Requests system to allocate memory.
-    /// Requested interval is aligned to @DEFAULT_GRANUALITY.
+    /// Requested interval is aligned to [DEFAULT_GRANULARITY].
     /// Adds new memory interval as segment in allocator context,
     /// if there is already some segments, which is neighbor, then
     /// merge old segments with new one.
@@ -555,6 +588,13 @@ impl Dlmalloc {
         return if chunk.is_null() { ptr::null_mut() } else { Chunk::to_mem(chunk) };
     }
 
+    /// If new requested size is less then old size,
+    /// then just crops existen chunk and returns its memory.
+    /// In other case checks whether existen chunk can be extended up, so that new
+    /// chunk size will be bigger then requested.
+    /// If so, then extends it and crops to requested size.
+    /// In other case we need other chunk, which have suit size, so malloc is used.
+    /// All data from old chunk copied to new.
     pub unsafe fn realloc(&mut self, oldmem: *mut u8, req_size: usize) -> *mut u8 {
         self.check_malloc_state();
 
@@ -580,27 +620,6 @@ impl Dlmalloc {
             self.crop_chunk(chunk, chunk, req_chunk_size);
             return oldmem;
         } else {
-            // Memory in the end of chunk memory can be corrupted in malloc or extend_free_chunk
-            // because any chunk store its prev_chunk_size in prev chunk memory end:
-            //
-            // chunk1 beg  chunk1 end  chunk2 begin
-            // |                   \  /
-            // [-][-][--------------][-][-][------------]
-            //       |                 |
-            //       chunk1 memory     chunk1 memory end
-            //
-            // When chunk1 is free, then chunk2 stores chunk1 size in the chunk1 end memory.
-            // When chunk1 is in use then chunk2 do not now chunk1 size and prev_chunk_size cannot be used.
-            //
-            //
-            // 2) If chunk is large then chunk is added to tree and we store all TreeChunk info:
-            //
-            // chunk beg   tree node info begin
-            //          \ /
-            //           {--[------------}------...
-            //              |             \
-            //  chunk memory begin         tree node info end
-
             if self.get_extended_up_chunk_size(chunk) >= req_chunk_size {
                 let next_chunk = Chunk::next(chunk);
                 dlassert!( !Chunk::cinuse(next_chunk) );
@@ -760,7 +779,10 @@ impl Dlmalloc {
         return chunk;
     }
 
-    // Only call this with power-of-two alignment and alignment > @MALIGN
+    /// When user want alignment, which is bigger then [MALIGN],
+    /// then alloc just use [Dlmalloc::malloc_internal] for bigger than requested size.
+    /// After that we crop malloced chunk, so that returned memory is aligned as need.
+    /// Remainder is stored in smallbins or tree.
     pub unsafe fn memalign(&mut self, mut alignment: usize, req_size: usize) -> *mut u8 {
         dlverbose!("{}", VERBOSE_DEL);
         dlverbose!("MEMALIGN: align={:x?}, size={:x?}", alignment, req_size);
@@ -825,7 +847,7 @@ impl Dlmalloc {
         (*self.top).head = chunk_size | PINUSE;
     }
 
-    // Init next and prev ptrs to itself, other is garbage
+    /// Init next and prev ptrs to itself, other is garbage
     unsafe fn init_small_bins(&mut self) {
         for i in 0..NSMALLBINS as u32 {
             let bin = self.smallbin_at(i);
@@ -857,7 +879,7 @@ impl Dlmalloc {
                 self.topsize = 0;
                 self.insert_chunk(prev, Chunk::size(prev));
             }
-            // TODO: may be we should find the biggest top free segment to be new @top
+            // TODO: may be we should find the biggest top free segment to be new top
         }
 
         self.extend_free_chunk(seg1_info_chunk, true);
@@ -887,7 +909,7 @@ impl Dlmalloc {
         return seg_info;
     }
 
-    // add a segment to hold a new noncontiguous region
+    /// add a segment to hold a new noncontiguous region
     unsafe fn add_segment(&mut self, tbase: *mut u8, tsize: usize, flags: u32) {
         dlassert!( tbase as usize % MALIGN == 0 );
         dlassert!( tsize % DEFAULT_GRANULARITY == 0 );
@@ -914,7 +936,7 @@ impl Dlmalloc {
         self.check_malloc_state();
     }
 
-    /// Finds segment which contains @ptr: @ptr is in [a, b)
+    /// Finds segment which contains `ptr`: means `ptr` is in [a, b)
     unsafe fn segment_holding(&self, ptr: *mut u8) -> *mut Segment {
         let mut sp = self.seg;
         while !sp.is_null() {
@@ -1376,6 +1398,39 @@ impl Dlmalloc {
         return chunk;
     }
 
+    /// When user call free mem, in our context it means - free one chunk.
+    /// There can be already free neighbor chunks, so we extend our chunk
+    /// to all free chunks around. Then if chunk is big enought we can return some memory to system.
+    /// To understand what memory can be returned to system, you should now one simple rule:
+    /// segments has size aligned by [DEFAULT_GRANULARITY]. So, when we return memory to the system,
+    /// we may change segments size or delete some segments or create new segments,
+    /// and in all cases we always must satisfy this rule.
+    /// Let's see example:
+    /// ````
+    ///  Segment begin    Default granuality                       Segment end
+    ///  |                |               \                                  |
+    ///  [================|========(=======|================|====)===========]
+    ///                            |                             |
+    ///                            Chunk begin                   Chunk end
+    /// ````
+    /// Here chunk is free, and we want to return some part of chunk's memory to the system.
+    /// To avoid unaligned segments, we call system free for only one granuality part:
+    /// ````
+    ///  Segment1                                           Segment
+    ///  |                                                  |
+    ///  [================|========(=======]                [====)===========]
+    ///                            |       |                |    |
+    ///                       Chunk1    Chunk1 end     Chunk2    Chunk2 end
+    /// ````
+    /// We create new Segment1 and crop old Segment.
+    /// Memory between segments isn't in allocator context now.
+    /// Chunk1 and Chunk2 are free remainders, which is added to tree/smallbins/top,
+    /// depends on size and context.
+    ///
+    /// If chunk is not big enought to sys-free something, then it is marked as free
+    /// and added to allocator context just like remainders above.
+    /// TODO: we also must call free in sys_alloc when one page is excess
+    /// TODO: we also must call free in realloc when we free chunk
     pub unsafe fn free(&mut self, mem: *mut u8) {
         dlverbose!( "{}", VERBOSE_DEL);
         dlverbose!( "ALLOC FREE CALL: mem={:?}", mem);
