@@ -2,9 +2,9 @@ extern crate dlmalloc;
 extern crate rand;
 
 use dlmalloc::Dlmalloc;
+use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
-use rand::rngs::StdRng;
 use std::cmp;
 
 #[test]
@@ -35,7 +35,7 @@ fn run_stress(seed: u64) {
     unsafe {
         for _k in 0..max {
             let free =
-                ptrs.len() > 0 && ((ptrs.len() < 10_000 && rng.gen_bool(1f64/3f64)) || rng.gen());
+                ptrs.len() > 0 && ((ptrs.len() < 10_000 && rng.gen_bool(1f64 / 3f64)) || rng.gen());
             if free {
                 let idx = rng.gen_range(0, ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
@@ -43,7 +43,7 @@ fn run_stress(seed: u64) {
                 continue;
             }
 
-            if ptrs.len() > 0 && rng.gen_bool(1f64/100f64) {
+            if ptrs.len() > 0 && rng.gen_bool(1f64 / 100f64) {
                 let idx = rng.gen_range(0, ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
                 let new_size = if rng.gen() {
@@ -70,13 +70,13 @@ fn run_stress(seed: u64) {
             } else {
                 rng.gen_range(1, 128 * 1024)
             };
-            let align = if rng.gen_bool(1f64/10f64) {
+            let align = if rng.gen_bool(1f64 / 10f64) {
                 1 << rng.gen_range(3, 8)
             } else {
                 8
             };
 
-            let zero = rng.gen_bool(1f64/50f64);
+            let zero = rng.gen_bool(1f64 / 50f64);
             let ptr = if zero {
                 a.calloc(size, align)
             } else {

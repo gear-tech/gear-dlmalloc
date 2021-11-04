@@ -19,8 +19,8 @@
 use core::cmp;
 use core::ptr;
 
-mod dlverbose;
 mod dlmalloc;
+mod dlverbose;
 
 #[cfg(all(feature = "global", not(test)))]
 mod global;

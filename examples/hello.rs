@@ -1,9 +1,9 @@
 extern crate dlmalloc;
 extern crate rand;
 
+use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
-use rand::rngs::StdRng;
 
 #[global_allocator]
 static A: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
@@ -21,29 +21,32 @@ struct Rectangle {
 
 #[cfg(unix)]
 #[cfg(target_pointer_width = "64")]
-const END_ALLOCED_SIZE : usize = 0x60;
+const END_ALLOCED_SIZE: usize = 0x60;
 
 #[inline(never)]
-fn test1()
-{
+fn test1() {
     {
-        let p1 = Box::new(Point{ x: 0f64, y: 0f64});
-        let p2 = Box::new(Point{ x: 1f64, y: 2f64});
-        let r = Box::new(Rectangle { top_left: *p1, bottom_right: *p2});
+        let p1 = Box::new(Point { x: 0f64, y: 0f64 });
+        let p2 = Box::new(Point { x: 1f64, y: 2f64 });
+        let r = Box::new(Rectangle {
+            top_left: *p1,
+            bottom_right: *p2,
+        });
         drop((p1, p2));
-        assert!( r.top_left.x == 0f64 );
-        assert!( r.top_left.y == 0f64 );
-        assert!( r.bottom_right.x == 1f64 );
-        assert!( r.bottom_right.y == 2f64 );
+        assert!(r.top_left.x == 0f64);
+        assert!(r.top_left.y == 0f64);
+        assert!(r.bottom_right.x == 1f64);
+        assert!(r.bottom_right.y == 2f64);
     }
     let x: usize;
-    unsafe{ x = dlmalloc::get_alloced_mem_size(); }
-    assert_eq!( x, END_ALLOCED_SIZE );
+    unsafe {
+        x = dlmalloc::get_alloced_mem_size();
+    }
+    assert_eq!(x, END_ALLOCED_SIZE);
 }
 
 #[inline(never)]
-fn test2()
-{
+fn test2() {
     {
         let mut rng = rand::thread_rng();
         let seed: u64 = rng.gen();
@@ -69,12 +72,13 @@ fn test2()
             }
             assert_eq!(v1, v2);
         }
-
     }
 
     let x: usize;
-    unsafe{ x = dlmalloc::get_alloced_mem_size(); }
-    assert_eq!( x, END_ALLOCED_SIZE );
+    unsafe {
+        x = dlmalloc::get_alloced_mem_size();
+    }
+    assert_eq!(x, END_ALLOCED_SIZE);
 }
 
 fn main() {

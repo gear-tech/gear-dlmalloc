@@ -1,8 +1,8 @@
 use core::fmt::Arguments;
 
-pub static DL_CHECKS   : bool = cfg!(feature = "debug");
-pub static DL_VERBOSE  : bool = cfg!(feature = "verbose");
-pub static VERBOSE_DEL : &str = "====================================";
+pub static DL_CHECKS: bool = cfg!(feature = "debug");
+pub static DL_VERBOSE: bool = cfg!(feature = "verbose");
+pub static VERBOSE_DEL: &str = "====================================";
 
 #[cfg(unix)]
 mod ext {
@@ -24,7 +24,7 @@ mod ext {
 }
 
 /// Static out buffer type
-type StaticStr = str_buf::StrBuf::<200>;
+type StaticStr = str_buf::StrBuf<200>;
 /// Static out buffer - we use it to avoid memory allocations,
 /// when something is printed inside allocator code.
 static mut OUT_BUFFER: StaticStr = StaticStr::new();
@@ -33,8 +33,8 @@ static mut OUT_BUFFER: StaticStr = StaticStr::new();
 /// What is the out stream defines in @ext module.
 #[inline(never)]
 pub unsafe fn dlprint_fn(args: Arguments<'_>) {
-    core::fmt::write( &mut OUT_BUFFER, args).unwrap();
-    ext::debug( &OUT_BUFFER, OUT_BUFFER.len());
+    core::fmt::write(&mut OUT_BUFFER, args).unwrap();
+    ext::debug(&OUT_BUFFER, OUT_BUFFER.len());
     OUT_BUFFER.set_len(0);
 }
 
@@ -54,10 +54,9 @@ use self::alloc::alloc::handle_alloc_error;
 
 /// Prints current line and throw error using @handle_alloc_error.
 #[inline(never)]
-pub unsafe fn dlassert_fn( line: u32)
-{
+pub unsafe fn dlassert_fn(line: u32) {
     dlprint_fn(format_args!("ALLOC ASSERT: {}", line));
-    handle_alloc_error( self::alloc::alloc::Layout::new::<u32>() );
+    handle_alloc_error(self::alloc::alloc::Layout::new::<u32>());
 }
 
 /// Acts like assert using handle_alloc_error if @DL_CHECKS is set, else does nothing.
@@ -65,7 +64,9 @@ pub unsafe fn dlassert_fn( line: u32)
 macro_rules! dlassert {
     ($check:expr) => {
         if DL_CHECKS && !($check) {
-            unsafe{ crate::dlverbose::dlassert_fn(line!()); };
+            unsafe {
+                crate::dlverbose::dlassert_fn(line!());
+            };
         }
     };
 }
