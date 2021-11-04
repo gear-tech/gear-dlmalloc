@@ -212,7 +212,7 @@ struct TreeChunk {
 /// Segment info stored inside segment memory in the end:
 /// ````
 ///                               Border chunk begin    Border chunk end
-///                                                \       /   and seg end
+///                                                 \       /   and seg end
 ///  [-----------------------------------][----(----][--)--]
 ///  |                                   /      \        \
 ///  Segment begin     Seg info chunk beg    Seg info beg \
@@ -242,12 +242,20 @@ struct Segment {
 
 /// Allocator context.
 ///
-/// Main items:
+/// See comments for items:
 /// * Data types - see [Chunk], [Segment], [TreeChunk]
 /// * Malloc   - see [Dlmalloc::malloc]
 /// * Memalign - see [Dlmalloc::memalign]
 /// * Realloc  - see [Dlmalloc::realloc].
 /// * Free     - see [Dlmalloc::free].
+///
+/// Some facts:
+/// 1) Two neighbor chunks cannot be free in the same time.
+/// If one chunk bacame to be free and there is neighbor free chunk,
+/// then this chunks will be merged.
+/// 2) Cannot be two neigbor segments.
+/// If we allocate new segment in [Dlmalloc::sys_alloc] and there is
+/// neighbor segment in allocator context, then we merge this segments.
 ///
 pub struct Dlmalloc {
     /// Mask of available [smallbins]
@@ -255,6 +263,7 @@ pub struct Dlmalloc {
     /// Mask of available [treebins]
     treemap: u32,
     /// First chunks in small chunks lists, one list for each small size.
+    /// see more [Dlmalloc::smallbin_at]
     smallbins: [*mut Chunk; (NSMALLBINS + 1) * 2],
     /// Pointers to roots of large chunks trees.
     treebins: [*mut TreeChunk; NTREEBINS],
@@ -357,6 +366,36 @@ impl Dlmalloc {
         }
     }
 
+    /// Checks whther there is a list of small chunks for given `idx`
+    unsafe fn smallmap_is_marked(&self, idx: u32) -> bool {
+        self.smallmap & (1 << idx) != 0
+    }
+
+    /// Marks given `idx` in smallmap
+    unsafe fn mark_smallmap(&mut self, idx: u32) {
+        self.smallmap |= 1 << idx;
+    }
+
+    /// Clears given `idx` in smallmap
+    unsafe fn clear_smallmap(&mut self, idx: u32) {
+        self.smallmap &= !(1 << idx);
+    }
+
+    /// Checks whether there is a tree for given `idx`
+    unsafe fn treemap_is_marked(&self, idx: u32) -> bool {
+        self.treemap & (1 << idx) != 0
+    }
+
+    /// Marks given `idx` in treemap
+    unsafe fn mark_treemap(&mut self, idx: u32) {
+        self.treemap |= 1 << idx;
+    }
+
+    /// Clears given `idx` in treemap
+    unsafe fn clear_treemap(&mut self, idx: u32) {
+        self.treemap &= !(1 << idx);
+    }
+
     /// If there is chunk in tree/smallbins/top/dv which has size >= `chunk_size`,
     /// then returns most suitable chunk, else return null.
     unsafe fn malloc_chunk_by_size(&mut self, chunk_size: usize) -> *mut Chunk {
@@ -371,7 +410,7 @@ impl Dlmalloc {
                 idx += !smallbits & 1;
 
                 let head_chunk = self.smallbin_at(idx);
-                let chunk = self.unlink_first_small_chunk(head_chunk, idx);
+                let chunk = self.unlink_last_small_chunk(head_chunk, idx);
 
                 let smallsize = self.small_index2size(idx);
                 (*chunk).head = smallsize | PINUSE | CINUSE;
@@ -389,7 +428,7 @@ impl Dlmalloc {
                     // Has some bigger size small chunks
                     let bins_idx = (smallbits << idx).trailing_zeros();
                     let head_chunk = self.smallbin_at(bins_idx);
-                    let chunk = self.unlink_first_small_chunk(head_chunk, bins_idx);
+                    let chunk = self.unlink_last_small_chunk(head_chunk, bins_idx);
 
                     let smallsize = self.small_index2size(bins_idx);
                     let remainder_size = smallsize - chunk_size;
@@ -688,6 +727,26 @@ impl Dlmalloc {
         }
     }
 
+    /// Crops `chunk` so that it will have addr `new_chunk_pos`
+    /// and size which `new_chunk_size` <= size <= `new_chunk_size` + [MIN_CHUNK_SIZE]
+    /// If there is remainders then extend-free them (see [Dlmalloc::extend_free_chunk])
+    /// ````
+    ///         new_chunk_pos            new_chunk_pos + new_chunk_size
+    ///         |                            |
+    /// [-------(----------------------------)--------]
+    /// |
+    /// chunk
+    /// ````
+    /// Will be transformed to:
+    /// ````
+    ///  Before remainder        After remainder
+    /// /                                    \
+    /// [------][----------------------------][-------]
+    ///         |
+    ///         chunk
+    /// ````
+    /// Before and after remainders will be extend-free.
+    /// Chunk will be set as [CINUSE] and returned.
     unsafe fn crop_chunk(&mut self, mut chunk: *mut Chunk, new_chunk_pos: *mut Chunk, new_chunk_size: usize) -> *mut Chunk {
         dlassert!( new_chunk_size % MALIGN == 0 );
         dlassert!( MIN_CHUNK_SIZE <= new_chunk_size );
@@ -780,7 +839,7 @@ impl Dlmalloc {
     }
 
     /// When user want alignment, which is bigger then [MALIGN],
-    /// then alloc just use [Dlmalloc::malloc_internal] for bigger than requested size.
+    /// then we just use [Dlmalloc::malloc_internal] for bigger than requested size.
     /// After that we crop malloced chunk, so that returned memory is aligned as need.
     /// Remainder is stored in smallbins or tree.
     pub unsafe fn memalign(&mut self, mut alignment: usize, req_size: usize) -> *mut u8 {
@@ -839,6 +898,7 @@ impl Dlmalloc {
         return mem_for_request;
     }
 
+    /// Init top chunk
     unsafe fn init_top(&mut self, chunk: *mut Chunk, chunk_size: usize) {
         dlassert!( chunk as usize % MALIGN == 0 );
         dlassert!( Chunk::to_mem(chunk) as usize % MALIGN == 0 );
@@ -856,6 +916,9 @@ impl Dlmalloc {
         }
     }
 
+    /// Merge two neighbor segments. `seg1` will be deleted, `seg2` is result segment.
+    /// If `seg1` has top chunk, then remove top and insert its chunk.
+    /// `seg1` info chunk and border chunks will be free-extended.
     unsafe fn merge_segments(&mut self, seg1: &mut Segment, seg2: &mut Segment) {
         dlassert!( seg1.end() == seg2.base );
         dlassert!( seg1.size % DEFAULT_GRANULARITY == 0 );
@@ -886,7 +949,8 @@ impl Dlmalloc {
         self.check_top_chunk(self.top);
     }
 
-    unsafe fn set_segment(&mut self, seg_base: *mut u8, seg_size: usize, prev_in_use: usize) -> *mut Segment {
+    /// Set seg info chunk and border chunk.
+    unsafe fn set_segment_info(&mut self, seg_base: *mut u8, seg_size: usize, prev_in_use: usize) -> *mut Segment {
         let seg_end = seg_base.offset(seg_size as isize);
         let seg_chunk = seg_end.offset(-1 * SEG_INFO_SIZE as isize) as *mut Chunk;
         let seg_info = Chunk::plus_offset(seg_chunk, 2 * PTR_SIZE) as *mut Segment;
@@ -900,7 +964,7 @@ impl Dlmalloc {
 
         dlverbose!("ALLOC: add seg, info chunk {:?}", seg_chunk);
 
-        // TODO: comments
+        // see [Segment]
         (*seg_chunk).head = (4 * PTR_SIZE) | prev_in_use | CINUSE;
         (*seg_info).base  = seg_base;
         (*seg_info).size  = seg_size;
@@ -909,12 +973,12 @@ impl Dlmalloc {
         return seg_info;
     }
 
-    /// add a segment to hold a new noncontiguous region
+    /// Add new memory as segment in allocator context
     unsafe fn add_segment(&mut self, tbase: *mut u8, tsize: usize, flags: u32) {
         dlassert!( tbase as usize % MALIGN == 0 );
         dlassert!( tsize % DEFAULT_GRANULARITY == 0 );
 
-        let seg = self.set_segment(tbase, tsize, 0);
+        let seg = self.set_segment_info(tbase, tsize, 0);
         (*seg).next = self.seg;
 
         // insert the rest of the old top into a bin as an ordinary free chunk
@@ -948,6 +1012,8 @@ impl Dlmalloc {
         ptr::null_mut()
     }
 
+    /// Find the smallest chunk in trees, in order to allocate memory for
+    /// small chunk.
     unsafe fn tmalloc_small(&mut self, size: usize) -> *mut u8 {
         let first_one_idx = self.treemap.trailing_zeros();
         let first_tree_chunk = *self.treebin_at(first_one_idx);
@@ -990,7 +1056,7 @@ impl Dlmalloc {
         return Chunk::to_mem(chunk);
     }
 
-    // TODO: refactoring
+    /// Find most suitable chunk in trees for `size`
     unsafe fn tmalloc_large(&mut self, size: usize) -> *mut u8 {
         let mut v = ptr::null_mut();
         let mut rsize = !size + 1;
@@ -1066,6 +1132,8 @@ impl Dlmalloc {
         Chunk::to_mem(vc)
     }
 
+    /// Returns smallbin head for `idx`.
+    ///
     /// In smallbins array we store Chunks instead *mut Chunks, why?
     /// Because we need only Chunk::prev and Chunk::next pointers from each chunk
     /// and chunk has size of 4 pointers then we can store prev and next for each chunk
@@ -1086,11 +1154,13 @@ impl Dlmalloc {
         return idx_ptr;
     }
 
+    /// Returns `idx` tree root chunk
     unsafe fn treebin_at(&mut self, idx: u32) -> *mut *mut TreeChunk {
         dlassert!((idx as usize) < self.treebins.len());
         &mut *self.treebins.get_unchecked_mut(idx as usize)
     }
 
+    /// Returns index of tree which can contain chunks for `size`
     fn compute_tree_index(&self, size: usize) -> u32 {
         let x = size >> TREEBIN_SHIFT;
         if x == 0 {
@@ -1103,21 +1173,24 @@ impl Dlmalloc {
         }
     }
 
-    unsafe fn unlink_first_small_chunk(&mut self, head: *mut Chunk, idx: u32) -> *mut Chunk {
-        let chunk_to_unlink = (*head).prev;
-        let new_first_chunk = (*chunk_to_unlink).prev;
-        dlassert!(chunk_to_unlink != head);
-        dlassert!(chunk_to_unlink != new_first_chunk);
-        dlassert!(Chunk::size(chunk_to_unlink) == self.small_index2size(idx));
+    /// Unlinks and returns last chunk from small chunks list
+    unsafe fn unlink_last_small_chunk(&mut self, head: *mut Chunk, idx: u32) -> *mut Chunk {
+        let chunk = (*head).prev;
+        let new_first_chunk = (*chunk).prev;
+        dlassert!( chunk != head );
+        dlassert!( chunk != new_first_chunk );
+        dlassert!( Chunk::size(chunk) == self.small_index2size(idx) );
         if head == new_first_chunk {
             self.clear_smallmap(idx);
         } else {
             (*new_first_chunk).next = head;
             (*head).prev = new_first_chunk;
         }
-        return chunk_to_unlink;
+        return chunk;
     }
 
+    /// Replaces [Dlmalloc::dv] to given `chunk`.
+    /// Inserts old dv as common chunk.
     unsafe fn replace_dv(&mut self, chunk: *mut Chunk, size: usize) {
         let dv_size = self.dvsize;
         dlassert!(self.is_chunk_small(dv_size));
@@ -1128,6 +1201,7 @@ impl Dlmalloc {
         self.dv = chunk;
     }
 
+    /// Inserts free chunk to allocator context
     unsafe fn insert_chunk(&mut self, chunk: *mut Chunk, size: usize) {
         dlverbose!("ALLOC: insert [{:?}, {:?}]", chunk, Chunk::next(chunk));
 
@@ -1140,6 +1214,7 @@ impl Dlmalloc {
         }
     }
 
+    /// Inserts small free chunk to allocator context
     unsafe fn insert_small_chunk(&mut self, chunk: *mut Chunk, size: usize) {
         let idx = self.small_index(size);
         let head = self.smallbin_at(idx);
@@ -1157,6 +1232,7 @@ impl Dlmalloc {
         (*chunk).next = head;
     }
 
+    /// Inserts large free chunk to allocator context
     unsafe fn insert_large_chunk(&mut self, chunk: *mut TreeChunk, size: usize) {
         let idx = self.compute_tree_index(size);
         let h = self.treebin_at(idx);
@@ -1200,34 +1276,11 @@ impl Dlmalloc {
         }
     }
 
-    unsafe fn smallmap_is_marked(&self, idx: u32) -> bool {
-        self.smallmap & (1 << idx) != 0
-    }
 
-    unsafe fn mark_smallmap(&mut self, idx: u32) {
-        self.smallmap |= 1 << idx;
-    }
-
-    unsafe fn clear_smallmap(&mut self, idx: u32) {
-        self.smallmap &= !(1 << idx);
-    }
-
-    unsafe fn treemap_is_marked(&self, idx: u32) -> bool {
-        self.treemap & (1 << idx) != 0
-    }
-
-    unsafe fn mark_treemap(&mut self, idx: u32) {
-        self.treemap |= 1 << idx;
-    }
-
-    unsafe fn clear_treemap(&mut self, idx: u32) {
-        self.treemap &= !(1 << idx);
-    }
-
+    /// Unlinks free chunk from list or tree
     unsafe fn unlink_chunk(&mut self, chunk: *mut Chunk, size: usize) {
         dlassert!( Chunk::size(chunk) == size );
 
-        // TODO remove size
         if self.is_chunk_small(size) {
             dlverbose!("ALLOC: unlink chunk[{:?}, {:?}]", chunk, Chunk::next(chunk));
             self.unlink_small_chunk(chunk, size)
@@ -1236,6 +1289,7 @@ impl Dlmalloc {
         }
     }
 
+    /// Unlinks small free chunk from small chunks list
     unsafe fn unlink_small_chunk(&mut self, chunk: *mut Chunk, size: usize) {
         let prev_chunk = (*chunk).prev;
         let next_chunk = (*chunk).next;
@@ -1251,6 +1305,7 @@ impl Dlmalloc {
         }
     }
 
+    /// Unlinks large free chunk from tree
     unsafe fn unlink_large_chunk(&mut self, chunk: *mut TreeChunk) {
         dlverbose!("ALLOC: unlink chunk[{:?}, {:?}]", chunk, Chunk::next(TreeChunk::chunk(chunk)));
         let parent = (*chunk).parent;
@@ -1315,6 +1370,7 @@ impl Dlmalloc {
         }
     }
 
+    /// Returns size of chunk if we will extend it up
     unsafe fn get_extended_up_chunk_size(&mut self, chunk: *mut Chunk) -> usize {
         let next_chunk = Chunk::next(chunk);
         if !Chunk::cinuse(next_chunk) {
@@ -1324,6 +1380,12 @@ impl Dlmalloc {
         }
     }
 
+    /// Frees and extends chunk.
+    /// Takes [CINUSE] chunk and marks it as free.
+    /// Because two neighbor chunks cannot be both free,
+    /// we must merge our chunk with all free chunks around.
+    /// `can_insert` arg controls whether we have to insert
+    /// the result free chunk into list/tree (if it isn't top or dv).
     unsafe fn extend_free_chunk(&mut self, mut chunk: *mut Chunk, can_insert: bool) -> *mut Chunk {
         dlassert!( Chunk::cinuse(chunk) );
         (*chunk).head &= !CINUSE;
@@ -1580,7 +1642,7 @@ impl Dlmalloc {
         dlassert!( mem_to_free_size == free_mem_size );
 
         if before_remainder_size != 0 {
-            let before_seg_info = self.set_segment(seg_begin, before_remainder_size, before_rem_pinuse);
+            let before_seg_info = self.set_segment_info(seg_begin, before_remainder_size, before_rem_pinuse);
 
             dlverbose!( "ALLOC FREE: before seg [{:?}, {:?}]", (*before_seg_info).base, Segment::top( before_seg_info));
 
@@ -1594,7 +1656,7 @@ impl Dlmalloc {
         }
 
         if after_remainder_size != 0 {
-            let after_seg_info = self.set_segment(mem_to_free_end, after_remainder_size, after_rem_pinuse);
+            let after_seg_info = self.set_segment_info(mem_to_free_end, after_remainder_size, after_rem_pinuse);
 
             dlverbose!( "ALLOC FREE: after seg [{:?}, {:?}]", (*after_seg_info).base, Segment::top( after_seg_info));
 
@@ -1622,18 +1684,7 @@ impl Dlmalloc {
         self.check_malloc_state();
     }
 
-    unsafe fn has_segment_link(&self, ptr: *mut Segment) -> bool {
-        let mut sp = self.seg;
-        while !sp.is_null() {
-            if Segment::holds(ptr, sp as *mut u8) {
-                return true;
-            }
-            sp = (*sp).next;
-        }
-        false
-    }
-
-    // Dumps
+    /// Returns static string about chunk status in context
     fn is_top_or_dv(&self, chunk: *mut Chunk) -> &'static str {
         if chunk == self.top {
             return "is top";
@@ -1644,6 +1695,7 @@ impl Dlmalloc {
         }
     }
 
+    /// Bypasses all segments and counts sum of in use chunks sizes.
     pub unsafe fn get_alloced_mem_size(&self) -> usize {
         let mut size: usize = 0;
         let mut seg = self.seg;
@@ -1662,6 +1714,7 @@ impl Dlmalloc {
         return size;
     }
 
+    /// Prints all segments and their chunks
     unsafe fn print_segments(&mut self) {
         if !DL_VERBOSE {
             return;
