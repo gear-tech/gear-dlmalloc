@@ -1,6 +1,6 @@
 use core::ptr;
 
-mod sys {
+mod gear_core {
     extern "C" {
         pub fn alloc(pages: u32) -> usize;
         pub fn free(page: u32);
@@ -13,7 +13,7 @@ pub fn page_size() -> usize {
 
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
     let pages = size / page_size();
-    let prev = sys::alloc(pages as _);
+    let prev = gear_core::alloc(pages as _);
     if prev == usize::max_value() {
         return (ptr::null_mut(), 0, 0);
     }
@@ -25,7 +25,7 @@ pub unsafe fn remap(_ptr: *mut u8, _oldsize: usize, _newsize: usize, _can_move: 
 }
 
 pub unsafe fn free_part(ptr: *mut u8, oldsize: usize, newsize: usize) -> (bool, *mut u8, usize) {
-    return free(ptr.offset(newsize as _), oldsize - newsize);
+    free(ptr.add(newsize), oldsize - newsize)
 }
 
 pub unsafe fn free(ptr: *mut u8, size: usize) -> (bool, *mut u8, usize) {
@@ -35,14 +35,14 @@ pub unsafe fn free(ptr: *mut u8, size: usize) -> (bool, *mut u8, usize) {
     let last_page = end_addr / page_size() - (if end_addr % page_size() == 0 { 1 } else { 0 });
 
     for page in first_page..=last_page {
-        sys::free(page as _);
+        gear_core::free(page as _);
     }
 
-    return (
+    (
         true,
         (first_page * page_size()) as *mut u8,
         (last_page - first_page + 1) * page_size(),
-    );
+    )
 }
 
 pub fn can_release_part(_flags: u32) -> bool {

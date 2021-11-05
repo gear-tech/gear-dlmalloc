@@ -4,7 +4,7 @@ use core::ptr;
 
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
     let addr = libc::mmap(
-        0 as *mut _,
+        ptr::null_mut(),
         size,
         libc::PROT_WRITE | libc::PROT_READ,
         libc::MAP_ANONYMOUS | libc::MAP_PRIVATE,
@@ -33,12 +33,12 @@ pub unsafe fn free_part(ptr: *mut u8, oldsize: usize, newsize: usize) -> (bool, 
     if rc != libc::MAP_FAILED {
         return (true, ptr, oldsize - newsize);
     }
-    let cond = libc::munmap(ptr.offset(newsize as isize) as *mut _, oldsize - newsize) == 0;
-    return (cond, ptr, oldsize - newsize);
+    let cond = libc::munmap(ptr.add(newsize) as *mut _, oldsize - newsize) == 0;
+    (cond, ptr, oldsize - newsize)
 }
 
 pub unsafe fn free(ptr: *mut u8, size: usize) -> (bool, *mut u8, usize) {
-    return (libc::munmap(ptr as *mut _, size) == 0, ptr, size);
+    (libc::munmap(ptr as *mut _, size) == 0, ptr, size)
 }
 
 pub fn can_release_part(_flags: u32) -> bool {

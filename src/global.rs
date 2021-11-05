@@ -33,7 +33,7 @@ unsafe impl GlobalAlloc for GlobalDlmalloc {
 
 /// Returns malloced size
 pub unsafe fn get_alloced_mem_size() -> usize {
-    return <Dlmalloc>::get_alloced_mem_size(&get());
+    <Dlmalloc>::get_alloced_mem_size(&get())
 }
 
 static mut DLMALLOC: Dlmalloc = Dlmalloc(::dlmalloc::DLMALLOC_INIT);

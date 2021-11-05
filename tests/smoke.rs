@@ -34,8 +34,8 @@ fn run_stress(seed: u64) {
     let max = if cfg!(test_lots) { 1_000_000 } else { 10_000 };
     unsafe {
         for _k in 0..max {
-            let free =
-                ptrs.len() > 0 && ((ptrs.len() < 10_000 && rng.gen_bool(1f64 / 3f64)) || rng.gen());
+            let free = !ptrs.is_empty()
+                && ((ptrs.len() < 10_000 && rng.gen_bool(1f64 / 3f64)) || rng.gen());
             if free {
                 let idx = rng.gen_range(0, ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
@@ -43,7 +43,7 @@ fn run_stress(seed: u64) {
                 continue;
             }
 
-            if ptrs.len() > 0 && rng.gen_bool(1f64 / 100f64) {
+            if !ptrs.is_empty() && rng.gen_bool(1f64 / 100f64) {
                 let idx = rng.gen_range(0, ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
                 let new_size = if rng.gen() {
@@ -55,12 +55,12 @@ fn run_stress(seed: u64) {
                 };
                 let mut tmp = Vec::new();
                 for i in 0..cmp::min(size, new_size) {
-                    tmp.push(*ptr.offset(i as isize));
+                    tmp.push(*ptr.add(i));
                 }
                 let ptr = a.realloc(ptr, size, align, new_size);
                 assert!(!ptr.is_null());
                 for (i, byte) in tmp.iter().enumerate() {
-                    assert_eq!(*byte, *ptr.offset(i as isize));
+                    assert_eq!(*byte, *ptr.add(i));
                 }
                 ptrs.push((ptr, new_size, align));
             }
@@ -84,9 +84,9 @@ fn run_stress(seed: u64) {
             };
             for i in 0..size {
                 if zero {
-                    assert_eq!(*ptr.offset(i as isize), 0);
+                    assert_eq!(*ptr.add(i), 0);
                 }
-                *ptr.offset(i as isize) = 0xce;
+                *ptr.add(i) = 0xce;
             }
             ptrs.push((ptr, size, align));
         }
@@ -95,7 +95,7 @@ fn run_stress(seed: u64) {
 
 #[test]
 fn many_stress() {
-    for i in 516..10000 {
+    for i in 0..200 {
         run_stress(i);
     }
 }
