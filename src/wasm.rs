@@ -22,7 +22,6 @@ pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
     ((prev * page_size()) as *mut u8, pages * page_size(), 0)
 }
 
-#[allow(unused_unsafe)]
 pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
     dlassert!(ptr as usize % page_size() == 0);
     dlassert!(size % page_size() == 0);
