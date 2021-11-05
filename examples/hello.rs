@@ -23,7 +23,6 @@ struct Rectangle {
 #[cfg(target_pointer_width = "64")]
 const END_ALLOCED_SIZE: usize = 0x60;
 
-
 #[cfg(target_os = "macos")]
 #[cfg(target_pointer_width = "64")]
 const END_ALLOCED_SIZE: usize = 0x180;
