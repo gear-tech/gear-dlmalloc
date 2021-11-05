@@ -2,6 +2,10 @@ extern crate libc;
 
 use core::ptr;
 
+pub fn page_size() -> usize {
+    4096
+}
+
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
     let addr = libc::mmap(
         ptr::null_mut(),
@@ -18,31 +22,8 @@ pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
     }
 }
 
-pub unsafe fn remap(ptr: *mut u8, oldsize: usize, newsize: usize, can_move: bool) -> *mut u8 {
-    let flags = if can_move { libc::MREMAP_MAYMOVE } else { 0 };
-    let ptr = libc::mremap(ptr as *mut _, oldsize, newsize, flags);
-    if ptr == libc::MAP_FAILED {
-        ptr::null_mut()
-    } else {
-        ptr as *mut u8
-    }
-}
-
-pub unsafe fn free_part(ptr: *mut u8, oldsize: usize, newsize: usize) -> (bool, *mut u8, usize) {
-    let rc = libc::mremap(ptr as *mut _, oldsize, newsize, 0);
-    if rc != libc::MAP_FAILED {
-        return (true, ptr, oldsize - newsize);
-    }
-    let cond = libc::munmap(ptr.add(newsize) as *mut _, oldsize - newsize) == 0;
-    (cond, ptr, oldsize - newsize)
-}
-
-pub unsafe fn free(ptr: *mut u8, size: usize) -> (bool, *mut u8, usize) {
-    (libc::munmap(ptr as *mut _, size) == 0, ptr, size)
-}
-
-pub fn can_release_part(_flags: u32) -> bool {
-    true
+pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
+    libc::munmap(ptr as *mut _, size) == 0
 }
 
 #[cfg(feature = "global")]
@@ -56,12 +37,4 @@ pub fn acquire_global_lock() {
 #[cfg(feature = "global")]
 pub fn release_global_lock() {
     unsafe { assert_eq!(libc::pthread_mutex_unlock(&mut LOCK), 0) }
-}
-
-pub fn allocates_zeros() -> bool {
-    true
-}
-
-pub fn page_size() -> usize {
-    4096
 }

@@ -2,7 +2,7 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  test:
+  test-ubuntu:
     name: Test
     runs-on: ubuntu-latest
     strategy:
@@ -12,6 +12,20 @@ jobs:
     - uses: actions/checkout@master
     - name: Install Rust (
       run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+    - run: cargo clippy
+    - run: cargo test --features debug --release
+
+  test-macos:
+    name: Test
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust (
+      run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+    - run: cargo clippy
     - run: cargo test --features debug --release
 
   rustfmt:
