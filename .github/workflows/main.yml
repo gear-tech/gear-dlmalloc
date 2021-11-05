@@ -3,7 +3,7 @@ on: [push, pull_request]
 
 jobs:
   test-ubuntu:
-    name: Test
+    name: Test-ubuntu
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -16,7 +16,7 @@ jobs:
     - run: cargo test --features debug --release
 
   test-macos:
-    name: Test
+    name: Test-macos
     runs-on: macos-latest
     strategy:
       matrix:
