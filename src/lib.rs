@@ -11,7 +11,6 @@
 //! Support for other platforms is largely untested and unused, but is used when
 //! testing this crate.
 
-#![cfg_attr(target_env = "sgx", feature(llvm_asm))]
 #![no_std]
 #![deny(missing_docs)]
 #![allow(dead_code)]
@@ -50,10 +49,6 @@ mod sys;
 
 #[cfg(target_os = "linux")]
 #[path = "linux.rs"]
-mod sys;
-
-#[cfg(target_env = "sgx")]
-#[path = "sgx.rs"]
 mod sys;
 
 #[allow(clippy::new_without_default)]
