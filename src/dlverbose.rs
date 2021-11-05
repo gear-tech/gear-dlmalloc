@@ -63,7 +63,7 @@ pub unsafe fn dlassert_fn(line: u32) {
 #[macro_export]
 macro_rules! dlassert {
     ($check:expr) => {
-        if DL_CHECKS && !($check) {
+        if crate::dlverbose::DL_CHECKS && !($check) {
             unsafe {
                 crate::dlverbose::dlassert_fn(line!());
             };
