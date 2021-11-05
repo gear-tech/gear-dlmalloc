@@ -10,8 +10,8 @@ static A: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
 #[derive(Debug, Clone, Copy)]
 struct Point {
-    x: f64,
-    y: f64,
+    x: u64,
+    y: u64,
 }
 
 struct Rectangle {
@@ -26,17 +26,17 @@ const END_ALLOCED_SIZE: usize = 0x60;
 #[inline(never)]
 fn test1() {
     {
-        let p1 = Box::new(Point { x: 0f64, y: 0f64 });
-        let p2 = Box::new(Point { x: 1f64, y: 2f64 });
+        let p1 = Box::new(Point { x: 0, y: 0 });
+        let p2 = Box::new(Point { x: 1, y: 2 });
         let r = Box::new(Rectangle {
             top_left: *p1,
             bottom_right: *p2,
         });
         drop((p1, p2));
-        assert!(r.top_left.x == 0f64);
-        assert!(r.top_left.y == 0f64);
-        assert!(r.bottom_right.x == 1f64);
-        assert!(r.bottom_right.y == 2f64);
+        assert!(r.top_left.x == 0);
+        assert!(r.top_left.y == 0);
+        assert!(r.bottom_right.x == 1);
+        assert!(r.bottom_right.y == 2);
     }
     let x: usize;
     unsafe {

@@ -1,5 +1,5 @@
 name: CI
-on: [push, pull_request]
+on: [pull_request]
 
 jobs:
   test-ubuntu:
@@ -13,6 +13,7 @@ jobs:
     - name: Install Rust (
       run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
     - run: cargo test --features debug --release
+    - run: cargo run --release --features="debug" --example hello
 
   test-macos:
     name: Test-macos
@@ -25,6 +26,7 @@ jobs:
     - name: Install Rust (
       run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
     - run: cargo test --features debug --release
+    - run: cargo run --release --features="debug" --example hello
 
   rustfmt:
     name: Rustfmt
