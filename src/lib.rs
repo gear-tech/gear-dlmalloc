@@ -15,12 +15,13 @@
 #![no_std]
 #![deny(missing_docs)]
 #![allow(dead_code)]
+#![allow(clippy::missing_safety_doc)]
 
 use core::cmp;
 use core::ptr;
 
-mod dlverbose;
 mod dlmalloc;
+mod dlverbose;
 
 #[cfg(all(feature = "global", not(test)))]
 mod global;
@@ -55,6 +56,7 @@ mod sys;
 #[path = "sgx.rs"]
 mod sys;
 
+#[allow(clippy::new_without_default)]
 impl Dlmalloc {
     /// Creates a new instance of an allocator, same as `DLMALLOC_INIT`.
     pub fn new() -> Dlmalloc {
@@ -85,7 +87,7 @@ impl Dlmalloc {
         if !ptr.is_null() {
             ptr::write_bytes(ptr, 0, size);
         }
-        return ptr;
+        ptr
     }
 
     /// Deallocates a `ptr` with `size` and `align` as the previous request used
@@ -94,8 +96,7 @@ impl Dlmalloc {
     /// Safety and contracts are largely governed by the `GlobalAlloc::dealloc`
     /// method contracts.
     #[inline]
-    pub unsafe fn free(&mut self, ptr: *mut u8, size: usize, align: usize) {
-        drop((size, align));
+    pub unsafe fn free(&mut self, ptr: *mut u8, _size: usize, _align: usize) {
         self.0.free(ptr)
     }
 
@@ -131,6 +132,6 @@ impl Dlmalloc {
 
     /// Returns alloced mem size
     pub unsafe fn get_alloced_mem_size(&self) -> usize {
-        return self.0.get_alloced_mem_size();
+        self.0.get_alloced_mem_size()
     }
 }
