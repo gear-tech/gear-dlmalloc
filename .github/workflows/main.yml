@@ -12,7 +12,6 @@ jobs:
     - uses: actions/checkout@master
     - name: Install Rust (
       run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
-    - run: cargo clippy
     - run: cargo test --features debug --release
 
   test-macos:
@@ -25,7 +24,6 @@ jobs:
     - uses: actions/checkout@master
     - name: Install Rust (
       run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
-    - run: cargo clippy
     - run: cargo test --features debug --release
 
   rustfmt:
