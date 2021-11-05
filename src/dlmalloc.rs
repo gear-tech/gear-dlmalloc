@@ -1733,10 +1733,8 @@ impl Dlmalloc {
             after_rem_pinuse = 0;
         }
 
-        let (cond, free_mem, free_mem_size) = sys::free(mem_to_free, mem_to_free_size);
-        dlassert!(cond);
-        dlassert!(free_mem == mem_to_free);
-        dlassert!(mem_to_free_size == free_mem_size);
+        let success = sys::free(mem_to_free, mem_to_free_size);
+        dlassert!(success);
 
         if before_remainder_size != 0 {
             let before_seg_info =

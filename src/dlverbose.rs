@@ -54,19 +54,19 @@ use self::alloc::alloc::handle_alloc_error;
 
 /// Prints current line and throw error using @handle_alloc_error.
 #[inline(never)]
-pub unsafe fn dlassert_fn(line: u32) {
-    dlprint_fn(format_args!("ALLOC ASSERT: {}", line));
-    handle_alloc_error(self::alloc::alloc::Layout::new::<u32>());
+pub fn dlassert_fn(line: u32) {
+    unsafe {
+        dlprint_fn(format_args!("ALLOC ASSERT: {}", line));
+        handle_alloc_error(self::alloc::alloc::Layout::new::<u32>());
+    }
 }
 
 /// Acts like assert using handle_alloc_error if @DL_CHECKS is set, else does nothing.
 #[macro_export]
 macro_rules! dlassert {
     ($check:expr) => {
-        if DL_CHECKS && !($check) {
-            unsafe {
-                crate::dlverbose::dlassert_fn(line!());
-            };
+        if crate::dlverbose::DL_CHECKS && !($check) {
+            crate::dlverbose::dlassert_fn(line!());
         }
     };
 }
