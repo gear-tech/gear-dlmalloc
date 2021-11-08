@@ -1411,7 +1411,12 @@ impl Dlmalloc {
     /// Unlinks small free chunk from small chunks list
     unsafe fn unlink_small_chunk(&mut self, chunk: *mut Chunk) {
         let size = Chunk::size(chunk);
-        dlverbose!("ALLOC: unlink small chunk[{:?}, {:?}, 0x{:x}]", chunk, Chunk::next(chunk), size);
+        dlverbose!(
+            "ALLOC: unlink small chunk[{:?}, {:?}, 0x{:x}]",
+            chunk,
+            Chunk::next(chunk),
+            size
+        );
         let prev_chunk = (*chunk).prev;
         let next_chunk = (*chunk).next;
         let idx = self.small_index(size);
@@ -1429,7 +1434,12 @@ impl Dlmalloc {
     /// Unlinks large free chunk from tree
     unsafe fn unlink_large_chunk(&mut self, chunk: *mut TreeChunk) {
         let size = Chunk::size(TreeChunk::chunk(chunk));
-        dlverbose!("ALLOC: unlink large chunk[{:?}, {:?}, 0x{:x}]", chunk, TreeChunk::next(chunk), size);
+        dlverbose!(
+            "ALLOC: unlink large chunk[{:?}, {:?}, 0x{:x}]",
+            chunk,
+            TreeChunk::next(chunk),
+            size
+        );
         let parent = (*chunk).parent;
         let mut r;
         if TreeChunk::next(chunk) != chunk {
@@ -1584,9 +1594,9 @@ impl Dlmalloc {
             (*next_chunk).head &= !PINUSE;
             (*next_chunk).prev_chunk_size = Chunk::size(chunk);
             if can_insert
-               && chunk != self.top
-               && chunk != self.dv
-               && Chunk::size(chunk) >= MIN_CHUNK_SIZE
+                && chunk != self.top
+                && chunk != self.dv
+                && Chunk::size(chunk) >= MIN_CHUNK_SIZE
             {
                 self.insert_chunk(chunk, Chunk::size(chunk));
             }
