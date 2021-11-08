@@ -122,6 +122,28 @@ const TREEBIN_SHIFT: usize = 8;
 ///    or if there is no prev chunk (when chunk is first in segment).
 /// 2) Second bit is set when current chunk is in use.
 /// 3) Third flag currently used only to identify border chunk (see [Segment])
+///
+/// Half chunks.
+/// Some times there is situations, when [MALIGN]-size chunks are created.
+/// For example, when we malloc chunk for mem-request
+/// and remainder is < [MIN_CHUNK_SIZE], but >= [MALIGN].
+/// Then we cannot insert this remainder into smallbins, but can mark it as free.
+/// Such chunk won't be used in malloc, but if some neighbor chunk
+/// become free, this two will be merged.
+///````
+/// chunk for allocation                  very small remainder
+/// |                                                   \
+/// [--(------------------------------------------------)-]
+///    |                                                |
+///    requested mem begin                      requested mem end
+///
+///
+/// chunk for allocation                    chunk end    free half chunk
+/// |                                                \  /
+/// [--(----------------------------------------------][-)-]
+///    |                                                 |
+///    requested mem begin                      requested mem end
+///````
 #[repr(C)]
 struct Chunk {
     /// Prev in mem chunk size
@@ -434,20 +456,19 @@ impl Dlmalloc {
                     let smallsize = self.small_index2size(bins_idx);
                     let remainder_size = smallsize - chunk_size;
 
-                    // TODO: mem::size_of::<usize>() != 4 why ???
-                    if mem::size_of::<usize>() != 4 && remainder_size < MIN_CHUNK_SIZE {
-                        // Use all size in @chunk
-                        (*chunk).head = smallsize | PINUSE | CINUSE;
-                        (*Chunk::next(chunk)).head |= PINUSE;
-                    } else {
-                        // In other case use lower part of @chunk
-                        (*chunk).head = chunk_size | PINUSE | CINUSE;
-
+                    if remainder_size >= MALIGN {
                         // set remainder as dv
+                        (*chunk).head = chunk_size | PINUSE | CINUSE;
                         let remainder = Chunk::plus_offset(chunk, chunk_size);
                         (*remainder).head = remainder_size | PINUSE;
                         Chunk::set_next_chunk_prev_size(remainder, remainder_size);
-                        self.replace_dv(remainder, remainder_size);
+                        if remainder_size >= MIN_CHUNK_SIZE {
+                            self.replace_dv(remainder, remainder_size);
+                        }
+                    } else {
+                        dlassert!(remainder_size == 0);
+                        (*chunk).head = smallsize | PINUSE | CINUSE;
+                        (*Chunk::next(chunk)).head |= PINUSE;
                     }
 
                     dlverbose!(
@@ -1276,6 +1297,7 @@ impl Dlmalloc {
     unsafe fn replace_dv(&mut self, chunk: *mut Chunk, size: usize) {
         let dv_size = self.dvsize;
         dlassert!(self.is_chunk_small(dv_size));
+        dlassert!(size >= MIN_CHUNK_SIZE);
         if dv_size != 0 {
             self.insert_chunk(self.dv, dv_size);
         }
