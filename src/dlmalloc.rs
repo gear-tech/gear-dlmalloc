@@ -279,6 +279,11 @@ struct Segment {
 /// 2) Cannot be two neigbor segments.
 /// If we allocate new segment in [Dlmalloc::sys_alloc] and there is
 /// neighbor segment in allocator context, then we merge this segments.
+/// 3) [MIN_CHUNK_SIZE] is min size, which in use chunk may have.
+/// Free chunks also may have size = [MALIGN]. This chunks is not
+/// stored in tree or smallbins and cannot be used in malloc.
+/// But this chunks can be merged with other free neighbor chunk.
+/// see more in [Chunk].
 ///
 pub struct Dlmalloc {
     /// Mask of available [smallbins]
@@ -1150,17 +1155,19 @@ impl Dlmalloc {
 
         self.unlink_large_chunk(best_tree_chunk);
 
-        if remainder_size < MIN_CHUNK_SIZE {
-            // use all mem in chunk
-            (*chunk).head = (remainder_size + size) | PINUSE | CINUSE;
+        if remainder_size < MALIGN {
+            dlassert!(remainder_size == 0);
+            (*chunk).head = size | PINUSE | CINUSE;
             (*Chunk::next(chunk)).head |= PINUSE;
         } else {
-            // use part and set remainder as dv
+            // use part and set remainder as dv if can
             (*chunk).head = size | PINUSE | CINUSE;
             let remainder = Chunk::next(chunk);
             (*remainder).head = remainder_size | PINUSE;
             Chunk::set_next_chunk_prev_size(remainder, remainder_size);
-            self.replace_dv(remainder, remainder_size);
+            if remainder_size >= MIN_CHUNK_SIZE {
+                self.replace_dv(remainder, remainder_size);
+            }
         }
 
         Chunk::to_mem(chunk)
@@ -1230,14 +1237,17 @@ impl Dlmalloc {
         let r = Chunk::plus_offset(vc, size);
         dlassert!(Chunk::size(vc) == rsize + size);
         self.unlink_large_chunk(v);
-        if rsize < MIN_CHUNK_SIZE {
-            (*vc).head = (rsize + size) | CINUSE | PINUSE;
+        if rsize < MALIGN {
+            dlassert!(rsize == 0);
+            (*vc).head = size | CINUSE | PINUSE;
             (*Chunk::next(vc)).head |= PINUSE;
         } else {
             (*vc).head = size | CINUSE | PINUSE;
             (*r).head = rsize | PINUSE;
             Chunk::set_next_chunk_prev_size(r, rsize);
-            self.insert_chunk(r, rsize);
+            if rsize >= MIN_CHUNK_SIZE {
+                self.insert_chunk(r, rsize);
+            }
         }
         Chunk::to_mem(vc)
     }

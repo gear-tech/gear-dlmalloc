@@ -2,10 +2,6 @@ extern crate libc;
 
 use core::ptr;
 
-pub fn page_size() -> usize {
-    4096
-}
-
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
     let addr = libc::mmap(
         ptr::null_mut(),
