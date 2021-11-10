@@ -1038,7 +1038,8 @@ impl Dlmalloc {
 
     /// Merge two neighbor segments. `seg1` will be deleted, `seg2` is result segment.
     /// If `seg1` has top chunk, then remove top and insert its chunk.
-    /// `seg1` info chunk and border chunks will be free-extended.
+    /// `seg1` info chunk and border chunks will be free-extended
+    /// and returns this extanded free chunk.
     unsafe fn merge_segments(&mut self, seg1: &mut Segment, seg2: &mut Segment) -> *mut Chunk {
         dlassert!(seg1.end() == seg2.base);
         dlassert!(seg1.size % DEFAULT_GRANULARITY == 0);
@@ -1581,6 +1582,7 @@ impl Dlmalloc {
                     self.dvsize = 0;
                 }
                 (*chunk).head = self.topsize | PINUSE;
+                // TODO: make one prev_chunk_size init
                 (*Chunk::next(chunk)).prev_chunk_size = self.topsize;
             } else if next_chunk == self.dv {
                 if chunk == self.top {
@@ -1620,61 +1622,17 @@ impl Dlmalloc {
         chunk
     }
 
-    /// When user call free mem, in our context it means - free one chunk.
-    /// There can be already free neighbor chunks, so we extend our chunk
-    /// to all free chunks around. Then if chunk is big enought we can return some memory to system.
-    /// To understand what memory can be returned to system, you should now one simple rule:
-    /// segments has size aligned by [DEFAULT_GRANULARITY]. So, when we return memory to the system,
-    /// we may change segments size or delete some segments or create new segments,
-    /// and in all cases we always must satisfy this rule.
-    /// Let's see example:
-    /// ````
-    ///  Segment begin    Default granuality                       Segment end
-    ///  |                |               \                                  |
-    ///  [================|========(=======|================|====)===========]
-    ///                            |                             |
-    ///                            Chunk begin                   Chunk end
-    /// ````
-    /// Here chunk is free, and we want to return some part of chunk's memory to the system.
-    /// To avoid unaligned segments, we call system free for only one granuality part:
-    /// ````
-    ///  Segment1                                           Segment
-    ///  |                                                  |
-    ///  [================|========(=======]                [====)===========]
-    ///                            |       |                |    |
-    ///                       Chunk1    Chunk1 end     Chunk2    Chunk2 end
-    /// ````
-    /// We create new Segment1 and crop old Segment.
-    /// Memory between segments isn't in allocator context now.
-    /// Chunk1 and Chunk2 are free remainders, which is added to tree/smallbins/top,
-    /// depends on size and context.
-    ///
-    /// If chunk is not big enought to sys-free something, then it is marked as free
-    /// and added to allocator context just like remainders above.
-    /// TODO: we also must call free in sys_alloc when one page is excess
-    /// TODO: we also must call free in realloc when we free chunk
-    pub unsafe fn free(&mut self, mem: *mut u8) {
-        dlverbose!("{}", VERBOSE_DEL);
-        dlverbose!("ALLOC FREE CALL: mem={:?}", mem);
+    /// Tries to free `chunk`, see more in [Dlmalloc::free]
+    /// If `chunk` has no intervals which suit to be freed by system,
+    /// then just insert `chunk` if need.
+    unsafe fn free_chunk(&mut self, chunk: *mut Chunk) {
+        dlassert!(Chunk::pinuse(chunk));
+        dlassert!(Chunk::cinuse(Chunk::next(chunk)));
 
-        self.check_malloc_state();
-
-        let chunk = Chunk::from_mem(mem);
         let chunk_size = Chunk::size(chunk);
-        dlverbose!("ALLOC FREE: chunk[{:?}, 0x{:x}]", chunk, chunk_size);
         dlassert!(chunk_size >= MIN_CHUNK_SIZE);
 
-        let chunk = self.extend_free_chunk(chunk, false);
-        let chunk_size = Chunk::size(chunk);
-        dlverbose!(
-            "ALLOC FREE: extended chunk[{:?}, 0x{:x}] {}",
-            chunk,
-            chunk_size,
-            self.is_top_or_dv(chunk)
-        );
-
         if chunk_size + SEG_INFO_SIZE < DEFAULT_GRANULARITY {
-            Chunk::set_next_chunk_prev_size(chunk, chunk_size);
             if chunk != self.top && chunk != self.dv {
                 self.insert_chunk(chunk, chunk_size);
             }
@@ -1746,7 +1704,6 @@ impl Dlmalloc {
         }
 
         if mem_to_free as usize > mem_to_free_end as usize - DEFAULT_GRANULARITY {
-            Chunk::set_next_chunk_prev_size(chunk, chunk_size);
             if chunk != self.top && chunk != self.dv {
                 self.insert_chunk(chunk, chunk_size);
             }
@@ -1857,6 +1814,61 @@ impl Dlmalloc {
         } else {
             (*prev_seg).next = next_seg;
         }
+    }
+
+    /// When user call free mem, in our context it means - free one chunk.
+    /// There can be already free neighbor chunks, so we extend our chunk
+    /// to all free chunks around. Then if chunk is big enought we can return some memory to system.
+    /// To understand what memory can be returned to system, you should now one simple rule:
+    /// segments has size aligned by [DEFAULT_GRANULARITY]. So, when we return memory to the system,
+    /// we may change segments size or delete some segments or create new segments,
+    /// and in all cases we always must satisfy this rule.
+    /// Let's see an example:
+    /// ````
+    ///  Segment begin    Default granuality                       Segment end
+    ///  |                |               \                                  |
+    ///  [================|========(=======|================|====)===========]
+    ///                            |                             |
+    ///                            Chunk begin                   Chunk end
+    /// ````
+    /// Here chunk is free, and we want to return some part of chunk's memory to the system.
+    /// To avoid unaligned segments, we call system free for only one granuality part:
+    /// ````
+    ///  Segment1                                           Segment
+    ///  |                                                  |
+    ///  [================|========(=======]                [====)===========]
+    ///                            |       |                |    |
+    ///                       Chunk1    Chunk1 end     Chunk2    Chunk2 end
+    /// ````
+    /// We create new Segment1 and crop old Segment.
+    /// Memory between segments isn't in allocator context now.
+    /// Chunk1 and Chunk2 are free remainders, which is added to tree/smallbins/top,
+    /// depends on size and context.
+    ///
+    /// If chunk is not big enought to sys-free something, then it is marked as free
+    /// and added to allocator context just like remainders above.
+    /// TODO: we also must call free in sys_alloc when one page is excess
+    /// TODO: we also must call free in realloc when we free chunk
+    pub unsafe fn free(&mut self, mem: *mut u8) {
+        dlverbose!("{}", VERBOSE_DEL);
+        dlverbose!("ALLOC FREE CALL: mem={:?}", mem);
+
+        self.check_malloc_state();
+
+        let chunk = Chunk::from_mem(mem);
+        let chunk_size = Chunk::size(chunk);
+        dlverbose!("ALLOC FREE: chunk[{:?}, 0x{:x}]", chunk, chunk_size);
+        dlassert!(chunk_size >= MIN_CHUNK_SIZE);
+
+        let chunk = self.extend_free_chunk(chunk, false);
+        dlverbose!(
+            "ALLOC FREE: extended chunk[{:?}, 0x{:x}] {}",
+            chunk,
+            Chunk::size(chunk),
+            self.is_top_or_dv(chunk)
+        );
+
+        self.free_chunk(chunk);
 
         self.print_segments();
         self.check_malloc_state();
