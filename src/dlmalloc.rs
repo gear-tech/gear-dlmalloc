@@ -433,6 +433,7 @@ impl Dlmalloc {
             let smallbits = self.smallmap >> idx;
 
             // Checks whether idx or idx + 1 has free chunks
+            // TODO: remove usage of idx + 1
             if smallbits & 0b11 != 0 {
                 // If idx has no free chunk then use idx + 1
                 idx += !smallbits & 1;
@@ -516,7 +517,7 @@ impl Dlmalloc {
         // Use the dv chunk if can
         if chunk_size <= self.dvsize {
             dlverbose!("MALLOC: use dv chunk[{:?}, {:x}]", self.dv, self.dvsize);
-            let chunk = self.crop_chunk(self.dv, self.dv, chunk_size);
+            let chunk = self.crop_chunk(self.dv, self.dv, chunk_size, true);
             return chunk;
         }
 
@@ -527,7 +528,7 @@ impl Dlmalloc {
                 self.top,
                 self.topsize
             );
-            let chunk = self.crop_chunk(self.top, self.top, chunk_size);
+            let chunk = self.crop_chunk(self.top, self.top, chunk_size, true);
             self.check_top_chunk(self.top);
             return chunk;
         }
@@ -593,7 +594,7 @@ impl Dlmalloc {
     /// Requested interval is aligned to [DEFAULT_GRANULARITY].
     /// Adds new memory interval as segment in allocator context,
     /// if there is already some segments, which is neighbor, then
-    /// merge old segments with new one.
+    /// merge old segments with a new one.
     unsafe fn sys_alloc(&mut self, size: usize) -> *mut u8 {
         dlverbose!("SYS_ALLOC: size = 0x{:x}", size);
 
@@ -612,22 +613,28 @@ impl Dlmalloc {
         }
         dlverbose!("SYS_ALLOC: new mem {:?} 0x{:x}", alloced_base, alloced_size);
 
-        // Append alloced memory in allocator context
+        // Appends alloced memory in allocator context
+        let mut req_chunk;
         if self.seg.is_null() {
-            dlverbose!("SYS_ALLOC: it's newest mem");
+            dlverbose!("SYS_ALLOC: it's a newest mem");
             self.update_least_addr(alloced_base);
 
             self.add_segment(alloced_base, alloced_size, flags);
+            // TODO: make it in constructor
             self.init_small_bins();
 
             self.print_segments();
             self.check_top_chunk(self.top);
+
+            req_chunk = self.top;
         } else {
             self.update_least_addr(alloced_base);
 
             self.add_segment(alloced_base, alloced_size, flags);
 
-            // Checks whether there is segment which is right before alloced mem
+            req_chunk = alloced_base as *mut Chunk;
+
+            // Checks whether there is segment, which is right before alloced mem
             let mut prev_seg = ptr::null_mut();
             let mut seg = self.seg;
             while !seg.is_null() && alloced_base != (*seg).end() {
@@ -648,11 +655,11 @@ impl Dlmalloc {
                 } else {
                     (*prev_seg).next = (*seg).next;
                 }
-                self.merge_segments(seg.as_mut().unwrap(), self.seg.as_mut().unwrap());
+                req_chunk = self.merge_segments(seg.as_mut().unwrap(), self.seg.as_mut().unwrap());
                 self.print_segments();
             }
 
-            // Checks whether there is segment which is right after alloced mem
+            // Checks whether there is segment, which is right after alloced mem
             let mut prev_seg = ptr::null_mut();
             let mut seg = self.seg;
             while !seg.is_null() && (*seg).base != alloced_base.add(alloced_size) {
@@ -667,18 +674,24 @@ impl Dlmalloc {
                     (*seg).size
                 );
                 let next_seg = (*self.seg).next;
-                self.merge_segments(self.seg.as_mut().unwrap(), seg.as_mut().unwrap());
+                req_chunk = self.merge_segments(self.seg.as_mut().unwrap(), seg.as_mut().unwrap());
                 self.seg = next_seg;
                 self.print_segments();
             }
         }
 
-        let chunk = self.malloc_chunk_by_size(size);
-        if chunk.is_null() {
-            ptr::null_mut()
-        } else {
-            Chunk::to_mem(chunk)
+        dlassert!(Chunk::size(req_chunk) >= size);
+
+        self.crop_chunk(req_chunk, req_chunk, size, false);
+        let next_chunk = Chunk::next(req_chunk);
+        if next_chunk != self.top
+            && next_chunk != self.dv
+            && Chunk::size(next_chunk) >= MIN_CHUNK_SIZE
+        {
+            self.insert_chunk(next_chunk, Chunk::size(next_chunk));
         }
+
+        Chunk::to_mem(req_chunk)
     }
 
     /// If new requested size is less then old size,
@@ -716,7 +729,7 @@ impl Dlmalloc {
 
         if req_chunk_size <= chunk_size {
             // requested mem <= then old - so just crop chunk and free remainder
-            self.crop_chunk(chunk, chunk, req_chunk_size);
+            self.crop_chunk(chunk, chunk, req_chunk_size, true);
             old_mem
         } else if self.get_extended_up_chunk_size(chunk) >= req_chunk_size {
             // We can use next free chunk
@@ -827,6 +840,7 @@ impl Dlmalloc {
         mut chunk: *mut Chunk,
         new_chunk_pos: *mut Chunk,
         new_chunk_size: usize,
+        can_insert: bool,
     ) -> *mut Chunk {
         dlassert!(new_chunk_size % MALIGN == 0);
         dlassert!(MIN_CHUNK_SIZE <= new_chunk_size);
@@ -867,7 +881,7 @@ impl Dlmalloc {
                 self.dvsize = chunk_size;
             }
 
-            self.extend_free_chunk(remainder, true);
+            self.extend_free_chunk(remainder, can_insert);
             dlverbose!("CROP: before rem [{:?}, {:x?}]", remainder, remainder_size);
 
             chunk = new_chunk_pos;
@@ -901,7 +915,7 @@ impl Dlmalloc {
                 Chunk::set_next_chunk_prev_size(self.dv, self.dvsize);
             } else {
                 (*remainder).head = remainder_size | PINUSE | CINUSE;
-                self.extend_free_chunk(remainder, true);
+                self.extend_free_chunk(remainder, can_insert);
             }
 
             chunk_size = new_chunk_size;
@@ -920,7 +934,7 @@ impl Dlmalloc {
             }
 
             (*remainder).head = remainder_size | PINUSE | CINUSE;
-            self.extend_free_chunk(remainder, true);
+            self.extend_free_chunk(remainder, can_insert);
             chunk_size = new_chunk_size;
         } else {
             (*Chunk::plus_offset(chunk, chunk_size)).head |= PINUSE;
@@ -994,7 +1008,7 @@ impl Dlmalloc {
             aligned_chunk = chunk;
         }
 
-        chunk = self.crop_chunk(chunk, aligned_chunk, req_chunk_size);
+        chunk = self.crop_chunk(chunk, aligned_chunk, req_chunk_size, true);
 
         let mem_for_request = Chunk::to_mem(chunk);
         dlassert!(Chunk::size(chunk) >= req_chunk_size);
@@ -1025,7 +1039,7 @@ impl Dlmalloc {
     /// Merge two neighbor segments. `seg1` will be deleted, `seg2` is result segment.
     /// If `seg1` has top chunk, then remove top and insert its chunk.
     /// `seg1` info chunk and border chunks will be free-extended.
-    unsafe fn merge_segments(&mut self, seg1: &mut Segment, seg2: &mut Segment) {
+    unsafe fn merge_segments(&mut self, seg1: &mut Segment, seg2: &mut Segment) -> *mut Chunk {
         dlassert!(seg1.end() == seg2.base);
         dlassert!(seg1.size % DEFAULT_GRANULARITY == 0);
         dlassert!(seg2.size % DEFAULT_GRANULARITY == 0);
@@ -1051,8 +1065,9 @@ impl Dlmalloc {
             // TODO: may be we should find the biggest top free segment to be new top
         }
 
-        self.extend_free_chunk(seg1_info_chunk, true);
+        let chunk = self.extend_free_chunk(seg1_info_chunk, false);
         self.check_top_chunk(self.top);
+        chunk
     }
 
     /// Set seg info chunk and border chunk.
@@ -1770,7 +1785,7 @@ impl Dlmalloc {
         dlassert!(crop_chunk_size <= chunk_size);
 
         (*chunk).head |= CINUSE;
-        let chunk = self.crop_chunk(chunk, crop_chunk, crop_chunk_size);
+        let chunk = self.crop_chunk(chunk, crop_chunk, crop_chunk_size, true);
         dlassert!(Chunk::size(chunk) == crop_chunk_size);
 
         let next_seg = (*seg).next;
