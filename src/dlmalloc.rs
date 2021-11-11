@@ -527,7 +527,6 @@ impl Dlmalloc {
                 }
             }
         } else {
-            // TODO: translate this to unsupported
             return ptr::null_mut();
         }
 
@@ -1352,7 +1351,7 @@ impl Dlmalloc {
         (*chunk).next = head;
     }
 
-    /// Inserts large free chunk to allocator context
+    /// Inserts large free chunk in tree
     unsafe fn insert_large_chunk(&mut self, chunk: *mut TreeChunk, size: usize) {
         let idx = self.compute_tree_index(size);
         let h = self.treebin_at(idx);
@@ -1518,9 +1517,6 @@ impl Dlmalloc {
     unsafe fn extend_free_chunk(&mut self, mut chunk: *mut Chunk, can_insert: bool) -> *mut Chunk {
         dlassert!(Chunk::size(chunk) >= MALIGN);
 
-        // TODO: remove
-        (*chunk).head &= !CINUSE;
-
         // try join prev chunk
         if !Chunk::pinuse(chunk) {
             let curr_chunk_size = Chunk::size(chunk);
@@ -1556,6 +1552,8 @@ impl Dlmalloc {
                 Chunk::size(next_chunk),
                 self.is_top_or_dv(next_chunk)
             );
+            dlassert!(chunk != self.top);
+
             if next_chunk == self.top {
                 self.top = chunk;
                 self.topsize += Chunk::size(chunk);
@@ -1565,32 +1563,22 @@ impl Dlmalloc {
                     self.dvsize = 0;
                 }
                 (*chunk).head = self.topsize | PINUSE;
-                // TODO: make one prev_chunk_size init
-                (*Chunk::next(chunk)).prev_chunk_size = self.topsize;
             } else if next_chunk == self.dv {
-                if chunk == self.top {
-                    // top eats dv
-                    self.topsize += Chunk::size(next_chunk);
-                    self.dvsize = 0;
-                    self.dv = ptr::null_mut();
-                    (*chunk).head = self.topsize | PINUSE;
-                } else {
-                    self.dvsize += Chunk::size(chunk);
-                    self.dv = chunk;
-                    (*chunk).head = self.dvsize | PINUSE;
-                }
-                (*Chunk::next(chunk)).prev_chunk_size = self.dvsize;
+                self.dv = chunk;
+                self.dvsize += Chunk::size(chunk);
+                (*chunk).head = self.dvsize | PINUSE;
             } else {
                 self.unlink_chunk(next_chunk);
                 (*chunk).head = (Chunk::size(chunk) + Chunk::size(next_chunk)) | PINUSE;
-                (*Chunk::next(chunk)).prev_chunk_size = Chunk::size(chunk);
                 if chunk == self.dv {
                     self.dvsize = Chunk::size(chunk);
                 } else if can_insert {
                     self.insert_chunk(chunk, Chunk::size(chunk));
                 }
             }
+            (*Chunk::next(chunk)).prev_chunk_size = Chunk::size(chunk);
         } else {
+            (*chunk).head &= !CINUSE;
             (*next_chunk).head &= !PINUSE;
             (*next_chunk).prev_chunk_size = Chunk::size(chunk);
             if can_insert
