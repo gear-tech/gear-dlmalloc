@@ -534,7 +534,9 @@ impl Dlmalloc {
         // Use the dv chunk if can
         if chunk_size <= self.dvsize {
             dlverbose!("MALLOC: use dv chunk[{:?}, {:x}]", self.dv, self.dvsize);
-            return self.crop_chunk(self.dv, self.dv, chunk_size, true);
+            let chunk = self.dv;
+            self.crop_chunk(self.dv, self.dv, chunk_size, true);
+            return chunk;
         }
 
         // Use the top chunk if can
@@ -544,7 +546,8 @@ impl Dlmalloc {
                 self.top,
                 self.topsize
             );
-            let chunk = self.crop_chunk(self.top, self.top, chunk_size, true);
+            let chunk = self.top;
+            self.crop_chunk(self.top, self.top, chunk_size, true);
             self.check_top_chunk(self.top);
             return chunk;
         }
@@ -857,15 +860,15 @@ impl Dlmalloc {
     /// If `can_insert` is true, then inserts the remainders,
     /// but in that case you must be shure that remainders cannot be extended:
     /// i.e there is no neighbor free chunks.
-    /// Chunk will be set as [CINUSE] and returned.
-    /// TODO: return whether there is after remainder
+    /// Cropped chunk is marked as [CINUSE].
+    /// Returns whether there is after remainder.
     unsafe fn crop_chunk(
         &mut self,
         mut chunk: *mut Chunk,
         new_chunk_pos: *mut Chunk,
         new_chunk_size: usize,
         can_insert: bool,
-    ) -> *mut Chunk {
+    ) -> bool {
         dlassert!(new_chunk_size % MALIGN == 0);
         dlassert!(MIN_CHUNK_SIZE <= new_chunk_size);
         dlassert!(new_chunk_pos as usize % MALIGN == 0);
@@ -910,6 +913,7 @@ impl Dlmalloc {
         dlassert!(new_chunk_pos == chunk);
         dlassert!(chunk_size >= new_chunk_size);
 
+        let has_after_rem;
         let next_chunk = Chunk::plus_offset(chunk, chunk_size);
         if chunk_size >= new_chunk_size + MALIGN {
             let mut remainder_size = chunk_size - new_chunk_size;
@@ -936,10 +940,12 @@ impl Dlmalloc {
             }
 
             chunk_size = new_chunk_size;
+            has_after_rem = true;
         } else {
             dlassert!(chunk_size == new_chunk_size);
             (*next_chunk).head |= PINUSE;
             (*next_chunk).prev_chunk_size = chunk_size;
+            has_after_rem = false;
         }
 
         dlassert!(chunk == new_chunk_pos);
@@ -949,7 +955,7 @@ impl Dlmalloc {
         self.set_top_or_dv(chunk, ptr::null_mut(), 0);
 
         dlverbose!("CROP: cropped chunk [{:?}, {:x?}]", chunk, chunk_size);
-        chunk
+        has_after_rem
     }
 
     /// When user want alignment, which is bigger then [MALIGN],
@@ -1002,15 +1008,12 @@ impl Dlmalloc {
             aligned_chunk = chunk;
         }
 
-        let has_after_rem = Chunk::next(chunk) as usize > Chunk::plus_offset(aligned_chunk, req_chunk_size) as usize;
-        let has_before_rem = chunk != aligned_chunk;
-        chunk = self.crop_chunk(chunk, aligned_chunk, req_chunk_size, false);
-        if has_after_rem {
-            self.extend_free_chunk(Chunk::next(chunk), true);
+        if self.crop_chunk(chunk, aligned_chunk, req_chunk_size, false) {
+            self.extend_free_chunk(Chunk::next(aligned_chunk), true);
         }
-        if has_before_rem {
-            // TODO: Just insert
-            self.extend_free_chunk(Chunk::prev(chunk), true);
+        if chunk != aligned_chunk {
+            self.insert_chunk(chunk, Chunk::size(chunk));
+            chunk = aligned_chunk;
         }
 
         let mem_for_request = Chunk::to_mem(chunk);
@@ -1344,6 +1347,7 @@ impl Dlmalloc {
 
         dlassert!(size == Chunk::size(chunk));
         dlassert!(size >= MIN_CHUNK_SIZE);
+        dlassert!(!Chunk::cinuse(chunk));
 
         if self.is_chunk_small(size) {
             self.insert_small_chunk(chunk, size);
@@ -1529,9 +1533,8 @@ impl Dlmalloc {
     }
 
     /// Frees and extends chunk.
-    /// Takes [CINUSE] chunk and marks it as free.
     /// Because two neighbor chunks cannot be both free,
-    /// we must merge our chunk with all free chunks around.
+    /// we must merge `chunk` with all free neighbor chunks.
     /// `can_insert` arg controls whether we have to insert
     /// the result free chunk into list/tree (if it isn't top or dv).
     unsafe fn extend_free_chunk(&mut self, mut chunk: *mut Chunk, can_insert: bool) -> *mut Chunk {
@@ -1739,17 +1742,12 @@ impl Dlmalloc {
             crop_chunk_size -= SEG_INFO_SIZE;
         }
 
-        dlassert!(crop_chunk >= chunk);
-        dlassert!(crop_chunk_size <= chunk_size);
-
-        (*chunk).head |= CINUSE;
-        let chunk = self.crop_chunk(chunk, crop_chunk, crop_chunk_size, true);
-        dlassert!(Chunk::size(chunk) == crop_chunk_size);
+        self.crop_chunk(chunk, crop_chunk, crop_chunk_size, true);
 
         let next_seg = (*seg).next;
         let before_rem_pinuse: usize;
         if before_remainder_size > 0 {
-            before_rem_pinuse = if Chunk::pinuse(chunk) { PINUSE } else { 0 };
+            before_rem_pinuse = if Chunk::pinuse(crop_chunk) { PINUSE } else { 0 };
         } else {
             before_rem_pinuse = 0;
         }
