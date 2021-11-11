@@ -20,7 +20,7 @@ extern crate static_assertions;
 
 /// Pointer size.
 const PTR_SIZE: usize = mem::size_of::<usize>();
-/// Malloc alignment. TODO: make it one PTR_SIZE ?
+/// Malloc alignment.
 const MALIGN: usize = 2 * PTR_SIZE;
 /// Chunk struct size
 const CHUNK_SIZE: usize = mem::size_of::<Chunk>();
@@ -967,61 +967,39 @@ impl Dlmalloc {
         dlverbose!("MEMALIGN: align={:x?}, size={:x?}", alignment, req_size);
 
         self.check_malloc_state();
+        dlassert!( alignment >= MIN_CHUNK_SIZE);
 
-        if alignment < MIN_CHUNK_SIZE {
-            alignment = MIN_CHUNK_SIZE;
-        }
         if req_size >= self.max_request() - alignment {
             return ptr::null_mut();
         }
+
         let req_chunk_size = self.mem_to_chunk_size(req_size);
-        let size_to_alloc = req_chunk_size + alignment + MIN_CHUNK_SIZE - PTR_SIZE;
-        let mem = self.malloc_internal(size_to_alloc);
+        let size_to_alloc = req_chunk_size + alignment;
+        let mut mem = self.malloc_internal(size_to_alloc);
         if mem.is_null() {
             return mem;
         }
 
         let mut chunk = Chunk::from_mem(mem);
-        let mut chunk_size = Chunk::size(chunk);
-
-        dlverbose!("MEMALIGN: chunk[{:?}, {:x?}]", chunk, chunk_size);
+        dlverbose!("MEMALIGN: chunk[{:?}, {:x?}]", chunk, Chunk::size(chunk));
 
         dlassert!(Chunk::pinuse(chunk) && Chunk::cinuse(chunk));
 
-        // TODO: what a strange logic?
-        let aligned_chunk;
-        if mem as usize & (alignment - 1) != 0 {
-            // Here we find an aligned sopt inside the chunk. Since we need to
-            // give back leading space in a chunk of at least `min_chunk_size`,
-            // if the first calculation places us at a spot with less than
-            // `min_chunk_size` leader we can move to the next aligned spot.
-            // we've allocated enough total room so that this is always possible
-            let br =
-                Chunk::from_mem(((mem as usize + alignment - 1) & (!alignment + 1)) as *mut u8);
-            let pos = if (br as usize - chunk as usize) > MIN_CHUNK_SIZE {
-                br as *mut u8
-            } else {
-                (br as *mut u8).add(alignment)
-            };
-            aligned_chunk = pos as *mut Chunk;
-        } else {
-            aligned_chunk = chunk;
-        }
+        mem = align_up(mem as usize, alignment) as *mut u8;
+        let aligned_chunk = Chunk::from_mem(mem);
 
         if self.crop_chunk(chunk, aligned_chunk, req_chunk_size, false) {
             self.extend_free_chunk(Chunk::next(aligned_chunk), true);
         }
-        if chunk != aligned_chunk {
+        if chunk != aligned_chunk
+            && Chunk::size(chunk) >= MIN_CHUNK_SIZE
+        {
             self.insert_chunk(chunk, Chunk::size(chunk));
-            chunk = aligned_chunk;
         }
 
-        let mem_for_request = Chunk::to_mem(chunk);
-        dlassert!(Chunk::size(chunk) >= req_chunk_size);
-        dlassert!(align_up(mem_for_request as usize, alignment) == mem_for_request as usize);
-        self.check_cinuse_chunk(chunk);
+        self.check_cinuse_chunk(aligned_chunk);
         self.check_malloc_state();
-        mem_for_request
+        mem
     }
 
     /// Init top chunk
@@ -1540,6 +1518,7 @@ impl Dlmalloc {
     unsafe fn extend_free_chunk(&mut self, mut chunk: *mut Chunk, can_insert: bool) -> *mut Chunk {
         dlassert!(Chunk::size(chunk) >= MALIGN);
 
+        // TODO: remove
         (*chunk).head &= !CINUSE;
 
         // try join prev chunk
