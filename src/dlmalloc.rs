@@ -91,9 +91,7 @@ const SBUFF_IDX_MAX: usize = {
 static_assertions::const_assert!(SBUFF_IDX_MAX < 8);
 
 /// Max size which cell can have
-const SBUFF_MAX: usize = {
-    (SBUFF_IDX_SIZES >> (4 * (SBUFF_IDX_MAX - 1))) * MALIGN
-};
+const SBUFF_MAX: usize = { (SBUFF_IDX_SIZES >> (4 * (SBUFF_IDX_MAX - 1))) * MALIGN };
 
 /// Sum of all cell sizes in [Dlmalloc::sbuff]
 const SBUFF_SIZE: usize = {
@@ -504,7 +502,12 @@ impl Dlmalloc {
     /// Set top or dv to `new_val` or `new_size` if `chunk` is top or dv
     /// Returns true if chunk is top or dv
     /// TODO: apply this fn
-    unsafe fn set_top_or_dv(&mut self, chunk: *mut Chunk, new_val: *mut Chunk, new_size: usize) -> bool {
+    unsafe fn set_top_or_dv(
+        &mut self,
+        chunk: *mut Chunk,
+        new_val: *mut Chunk,
+        new_size: usize,
+    ) -> bool {
         if chunk == self.top {
             self.top = new_val;
             self.topsize = new_size;
@@ -882,7 +885,11 @@ impl Dlmalloc {
     /// All data from old chunk copied to new.
     pub unsafe fn realloc(&mut self, old_mem: *mut u8, req_size: usize) -> *mut u8 {
         dlverbose!("{}", VERBOSE_DEL);
-        dlverbose!("DL REALLOC CALL: old_mem={:?} req_size=0x{:x}", old_mem, req_size);
+        dlverbose!(
+            "DL REALLOC CALL: old_mem={:?} req_size=0x{:x}",
+            old_mem,
+            req_size
+        );
 
         self.check_malloc_state();
 
@@ -1153,7 +1160,7 @@ impl Dlmalloc {
         dlverbose!("MEMALIGN: align={:x?}, size={:x?}", alignment, req_size);
 
         self.check_malloc_state();
-        dlassert!( alignment >= MIN_CHUNK_SIZE);
+        dlassert!(alignment >= MIN_CHUNK_SIZE);
 
         if req_size >= self.max_request() - alignment {
             return ptr::null_mut();
@@ -1177,9 +1184,7 @@ impl Dlmalloc {
         if self.crop_chunk(chunk, aligned_chunk, req_chunk_size, false) {
             self.extend_free_chunk(Chunk::next(aligned_chunk), true);
         }
-        if chunk != aligned_chunk
-            && Chunk::size(chunk) >= MIN_CHUNK_SIZE
-        {
+        if chunk != aligned_chunk && Chunk::size(chunk) >= MIN_CHUNK_SIZE {
             self.insert_chunk(chunk, Chunk::size(chunk));
         }
 
@@ -2245,9 +2250,16 @@ impl Dlmalloc {
                 if chunk != self.top && chunk != self.dv {
                     dlassert!(self.top < chunk || self.top >= Chunk::next(chunk));
                     dlassert!(self.dv < chunk || self.dv >= Chunk::next(chunk));
-                    dlassert!(Chunk::cinuse(chunk) || Chunk::size(chunk) == MALIGN || self.bin_find(chunk));
+                    dlassert!(
+                        Chunk::cinuse(chunk)
+                            || Chunk::size(chunk) == MALIGN
+                            || self.bin_find(chunk)
+                    );
                 }
-                dlassert!(Chunk::cinuse(chunk) || Chunk::size(chunk) < 2 * DEFAULT_GRANULARITY + SEG_INFO_SIZE);
+                dlassert!(
+                    Chunk::cinuse(chunk)
+                        || Chunk::size(chunk) < 2 * DEFAULT_GRANULARITY + SEG_INFO_SIZE
+                );
                 dlassert!(Chunk::pinuse(chunk) || !Chunk::cinuse(Chunk::prev(chunk)));
                 let next = Chunk::next(chunk);
                 dlassert!(Chunk::pinuse(next) == Chunk::cinuse(chunk));

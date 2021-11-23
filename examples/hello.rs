@@ -21,13 +21,21 @@ struct Rectangle {
     bottom_right: Point,
 }
 
-// #[cfg(target_os = "linux")]
-// #[cfg(target_pointer_width = "64")]
-// const END_ALLOCED_SIZE: usize = 0x60;
+#[cfg(target_os = "linux")]
+#[cfg(target_pointer_width = "64")]
+const END_ALLOCED_SIZE: usize = 0x0;
 
-// #[cfg(target_os = "macos")]
-// #[cfg(target_pointer_width = "64")]
-// const END_ALLOCED_SIZE: usize = 0x180;
+#[cfg(target_os = "linux")]
+#[cfg(target_pointer_width = "64")]
+const END_ALLOCED_SIZE_WITH_STDOUT: usize = 0x410;
+
+#[cfg(target_os = "macos")]
+#[cfg(target_pointer_width = "64")]
+const END_ALLOCED_SIZE: usize = 0x112;
+
+#[cfg(target_os = "macos")]
+#[cfg(target_pointer_width = "64")]
+const END_ALLOCED_SIZE_WITH_STDOUT: usize = 0x0;
 
 #[inline(never)]
 fn test1() {
@@ -48,7 +56,7 @@ fn test1() {
     unsafe {
         x = dlmalloc::get_alloced_mem_size();
     }
-    assert_eq!(x, 0);
+    assert_eq!(x, END_ALLOCED_SIZE);
 }
 
 #[inline(never)]
@@ -85,7 +93,7 @@ fn test2() {
     unsafe {
         x = dlmalloc::get_alloced_mem_size();
     }
-    assert_eq!(x, 1040);
+    assert_eq!(x, END_ALLOCED_SIZE_WITH_STDOUT);
 }
 
 fn main() {

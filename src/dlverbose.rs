@@ -34,9 +34,10 @@ static mut OUT_BUFFER: StaticStr = StaticStr::new();
 #[inline(never)]
 pub fn dlprint_fn(args: Arguments<'_>) {
     unsafe {
-    core::fmt::write(&mut OUT_BUFFER, args).unwrap();
-    ext::debug(&OUT_BUFFER, OUT_BUFFER.len());
-    OUT_BUFFER.set_len(0); }
+        core::fmt::write(&mut OUT_BUFFER, args).unwrap();
+        ext::debug(&OUT_BUFFER, OUT_BUFFER.len());
+        OUT_BUFFER.set_len(0);
+    }
 }
 
 /// Prints string with args if @DL_VERBOSE is set.
