@@ -71,6 +71,70 @@ const SMALLBIN_SHIFT: usize = 3;
 /// We use it to identify corresponding tree bin for chunk, see [Dlmalloc::compute_tree_index]
 const TREEBIN_SHIFT: usize = 8;
 
+/// Sizes for each [Dlmalloc::sbuff] cell.
+/// Each hex number is size of one cell, for example 0x4321,
+/// means that first cell will have size 0x1, second 0x2,
+/// third 0x3 and forth 0x4.
+const SBUFF_IDX_SIZES: usize = 0x86611;
+
+/// Max index which cell can have plus one.
+/// Actually is number of cells in [Dlmalloc::sbuff]
+const SBUFF_IDX_MAX: usize = {
+    let mut sizes = SBUFF_IDX_SIZES;
+    let mut idx = 0;
+    while sizes != 0 {
+        idx += 1;
+        sizes = sizes >> 4;
+    }
+    idx
+};
+static_assertions::const_assert!(SBUFF_IDX_MAX < 8);
+
+/// Max size which cell can have
+const SBUFF_MAX: usize = {
+    (SBUFF_IDX_SIZES >> (4 * (SBUFF_IDX_MAX - 1))) * MALIGN
+};
+
+/// Sum of all cell sizes in [Dlmalloc::sbuff]
+const SBUFF_SIZE: usize = {
+    let mut sizes = SBUFF_IDX_SIZES;
+    let mut res = 0;
+    while sizes != 0 {
+        res += sizes & 0xF;
+        sizes = sizes >> 4;
+    }
+    res * MALIGN
+};
+
+/// Hex number which identify offsets for each sbuff cell.
+const SBUFF_IDX_OFFSETS: usize = {
+    let mut sizes = SBUFF_IDX_SIZES;
+    let mut offset = 0;
+    let mut res = 0;
+    let mut idx = 0;
+    while sizes != 0 {
+        res += offset << idx;
+        offset += sizes & 0xF;
+        idx += 4;
+        sizes = sizes >> 4;
+    }
+    res
+};
+
+/// Max offset - offset which last cell in sbuff has.
+/// We check that this offset is less then 0x10,
+/// so that each offset can be stored as one hex number in [SBUFF_IDX_OFFSETS].
+const SBUFF_MAX_OFFSET: usize = {
+    let mut offset = 0;
+    let mut idx = 0;
+    while idx < SBUFF_IDX_MAX - 1 {
+        offset += (SBUFF_IDX_SIZES >> (4 * idx)) & 0xF;
+        idx += 1;
+    }
+    offset
+};
+static_assertions::const_assert!(SBUFF_MAX_OFFSET < 0x10);
+
 /// Dl allocator uses memory non-overlapping intervals for each request - here named Chunks.
 ///
 /// Each chunk can be in two states: in use and free.
@@ -281,12 +345,22 @@ struct Segment {
 /// If we allocate new segment in [Dlmalloc::sys_alloc] and there is
 /// neighbor segment in allocator context, then we merge this segments.
 /// 3) [MIN_CHUNK_SIZE] is min size, which in use chunk may have.
-/// Free chunks also may have size = [MALIGN]. This chunks is not
+/// Free chunks also may have size == [MALIGN]. This chunks is not
 /// stored in tree or smallbins and cannot be used in malloc.
 /// But this chunks can be merged with other free neighbor chunk.
 /// see more in [Chunk].
+/// 4) If no heap memory is allocated yet, then dlmalloc use static
+/// buffer for small requests allocations, in order to increase
+/// allocation performance. See more in [Dlmalloc::malloc].
 ///
+#[repr(align(16))]
+#[repr(C)]
 pub struct Dlmalloc {
+    /// Static memory buffer, it uses to alloc small memory
+    /// requests, if there is no allocated memory yet.
+    sbuff: [u8; SBUFF_SIZE],
+    /// Mark sbuff cells which is in use.
+    sbuff_mask: u8,
     /// Mask of available [smallbins]
     smallmap: u32,
     /// Mask of available [treebins]
@@ -323,6 +397,8 @@ pub const DLMALLOC_INIT: Dlmalloc = Dlmalloc {
     dv: 0 as *mut _,
     top: 0 as *mut _,
     seg: 0 as *mut _,
+    sbuff: [0; SBUFF_SIZE],
+    sbuff_mask: 0,
     least_addr: 0 as *mut _,
 };
 
@@ -441,6 +517,48 @@ impl Dlmalloc {
         true
     }
 
+    /// Returns size of [Dlmalloc::sbuff] cell for `idx` ``
+    unsafe fn sbuff_idx_to_size(idx: usize) -> usize {
+        dlassert!(idx < SBUFF_IDX_MAX);
+        ((SBUFF_IDX_SIZES >> (4 * idx)) & 0xF) * MALIGN
+    }
+
+    /// Returns offset of [Dlmalloc::sbuff] cell for `idx`
+    unsafe fn sbuff_idx_to_offset(idx: usize) -> usize {
+        dlassert!(idx < SBUFF_IDX_MAX);
+        ((SBUFF_IDX_OFFSETS >> (4 * idx)) & 0xF) * MALIGN
+    }
+
+    /// Returns idx of [Dlmalloc::sbuff] cell which has `offset`.
+    /// If cannot find such cell, then returns [SBUFF_IDX_MAX]
+    unsafe fn sbuff_offset_to_idx(offset: usize) -> usize {
+        for idx in 0..SBUFF_IDX_MAX {
+            if offset == Dlmalloc::sbuff_idx_to_offset(idx) {
+                return idx;
+            }
+        }
+        SBUFF_IDX_MAX
+    }
+
+    /// Returns index of free [Dlmalloc::sbuff] cell, which has
+    /// size >= then `size`.
+    /// If cannot find such cell then returns [SBUFF_IDX_MAX]
+    unsafe fn sbuff_size_to_idx(&self, size: usize) -> usize {
+        if size > SBUFF_MAX {
+            return SBUFF_IDX_MAX;
+        }
+
+        for idx in 0..SBUFF_IDX_MAX {
+            if self.sbuff_mask & (1 << idx) != 0 {
+                continue;
+            }
+            if size <= Dlmalloc::sbuff_idx_to_size(idx) {
+                return idx;
+            }
+        }
+        SBUFF_IDX_MAX
+    }
+
     /// If there is chunk in tree/smallbins/top/dv which has size >= `chunk_size`,
     /// then returns most suitable chunk, else return null.
     unsafe fn malloc_chunk_by_size(&mut self, chunk_size: usize) -> *mut Chunk {
@@ -554,8 +672,20 @@ impl Dlmalloc {
         ptr::null_mut()
     }
 
-    /// Malloc func for internal usage, see more in `malloc`
-    unsafe fn malloc_internal(&mut self, size: usize) -> *mut u8 {
+    /// Malloc func for internal usage, see more in [Dlmalloc::malloc]
+    unsafe fn malloc_internal(&mut self, size: usize, can_use_sbuff: bool) -> *mut u8 {
+        // Tries to use memory from statcic buffer first if can.
+        if can_use_sbuff && self.seg.is_null() {
+            let sbuff = &mut self.sbuff as *mut u8;
+            dlassert!(sbuff as usize % MALIGN == 0);
+            let idx = self.sbuff_size_to_idx(size);
+            if idx < SBUFF_IDX_MAX {
+                dlverbose!("DL MALLOC: use sbuff cell idx={}", idx);
+                self.sbuff_mask |= (1 << idx);
+                return sbuff.add(Dlmalloc::sbuff_idx_to_offset(idx));
+            }
+        }
+
         let chunk_size = self.mem_to_chunk_size(size);
         let chunk = self.malloc_chunk_by_size(chunk_size);
         if chunk.is_null() {
@@ -569,7 +699,17 @@ impl Dlmalloc {
 
     /// Allocates memory interval which has size > `size` (bigger because of chunk overhead).
     /// In first memory allocation we have no available memory in allocator context.
-    /// So, we request system for memory interval aligned by [DEFAULT_GRANULARITY].
+    ///
+    /// If requested size is small enought then we can use static buffer [Dlmalloc::sbuff]
+    /// and allocate requested size their. This buffer begin addr is aligned by 16 bytes,
+    /// so this must be enought for archs which has pointer size <= 8 bytes, and
+    /// all cells in sbuff is aligned by [MALIGN].
+    /// `Cell` in sbuff is a static memory interval which has const length.
+    /// All cells is numerated by their index. We store offsets and sizes for each
+    /// cell in [SBUFF_IDX_OFFSETS] and [SBUFF_IDX_SIZES].
+    ///
+    /// If there is no free cells in static buffer or requested size is not small enought,
+    /// then we request system for memory interval aligned by [DEFAULT_GRANULARITY].
     /// This memory is added as segment in segments list, head is [Dlmalloc::seg].
     /// see more in [Dlmalloc::sys_alloc]
     /// So, after that there is some available memory in allocator context.
@@ -603,7 +743,7 @@ impl Dlmalloc {
         dlverbose!("MALLOC CALL: size = 0x{:x}", size);
         self.print_segments();
         self.check_malloc_state();
-        let mem = self.malloc_internal(size);
+        let mem = self.malloc_internal(size, true);
         dlverbose!("MALLOC: result mem {:?}", mem);
         mem
     }
@@ -741,10 +881,35 @@ impl Dlmalloc {
     /// In other case we need other chunk, which have suit size, so malloc is used.
     /// All data from old chunk copied to new.
     pub unsafe fn realloc(&mut self, old_mem: *mut u8, req_size: usize) -> *mut u8 {
+        dlverbose!("{}", VERBOSE_DEL);
+        dlverbose!("DL REALLOC CALL: old_mem={:?} req_size=0x{:x}", old_mem, req_size);
+
         self.check_malloc_state();
 
         if req_size >= self.max_request() {
             return ptr::null_mut();
+        }
+
+        // Separate handling for memory which was allocated in
+        // static buffer [Dlmalloc::sbuff].
+        let sbuff = &mut self.sbuff as *mut u8;
+        if old_mem >= sbuff && old_mem <= sbuff.add(SBUFF_SIZE) {
+            let offset = old_mem as usize - sbuff as usize;
+            let idx = Dlmalloc::sbuff_offset_to_idx(offset);
+            let size = Dlmalloc::sbuff_idx_to_size(idx);
+            dlassert!(idx < SBUFF_IDX_MAX);
+            dlverbose!("DL REALLOC: in sbuff idx={} size=0x{:x}", idx, size);
+
+            if size >= req_size {
+                dlverbose!("DL REALLOC: use old sbuff cell");
+                return old_mem;
+            }
+
+            self.sbuff_mask &= !(1 << idx);
+            let new_mem = self.malloc_internal(req_size, true);
+            dlverbose!("DL REALLOC: new mem {:?}", new_mem);
+            ptr::copy_nonoverlapping(old_mem, new_mem, size);
+            return new_mem;
         }
 
         let req_chunk_size = self.mem_to_chunk_size(req_size);
@@ -755,7 +920,6 @@ impl Dlmalloc {
         let mut chunk = old_chunk;
         let mut chunk_size = old_chunk_size;
 
-        dlverbose!("{}", VERBOSE_DEL);
         dlverbose!(
             "REALLOC: oldmem={:?} old_mem_size=0x{:x} req_size=0x{:x}",
             old_mem,
@@ -834,7 +998,7 @@ impl Dlmalloc {
             old_mem
         } else {
             // Alloc new mem and copy all data to it
-            let new_mem = self.malloc_internal(req_size);
+            let new_mem = self.malloc_internal(req_size, false);
             if new_mem.is_null() {
                 return new_mem;
             }
@@ -997,7 +1161,7 @@ impl Dlmalloc {
 
         let req_chunk_size = self.mem_to_chunk_size(req_size);
         let size_to_alloc = req_chunk_size + alignment;
-        let mut mem = self.malloc_internal(size_to_alloc);
+        let mut mem = self.malloc_internal(size_to_alloc, false);
         if mem.is_null() {
             return mem;
         }
@@ -1813,7 +1977,7 @@ impl Dlmalloc {
     /// and in all cases we always must satisfy this rule.
     /// Let's see an example:
     /// ````
-    ///  Segment begin    Default granuality                       Segment end
+    ///  Segment begin    Default granularity                       Segment end
     ///  |                |               \                                  |
     ///  [================|========(=======|================|====)===========]
     ///                            |                             |
@@ -1837,13 +2001,25 @@ impl Dlmalloc {
     /// and added to allocator context just like remainders above.
     pub unsafe fn free(&mut self, mem: *mut u8) {
         dlverbose!("{}", VERBOSE_DEL);
-        dlverbose!("ALLOC FREE CALL: mem={:?}", mem);
+        dlverbose!("DL FREE CALL: mem={:?}", mem);
 
         self.check_malloc_state();
 
+        // Separate handling for memory which was allocated in
+        // static buffer [Dlmalloc::sbuff].
+        let sbuff = &mut self.sbuff as *mut u8;
+        if mem >= sbuff && mem <= sbuff.add(SBUFF_SIZE) {
+            let offset = mem as usize - sbuff as usize;
+            let idx = Dlmalloc::sbuff_offset_to_idx(offset);
+            dlverbose!("DL FREE: is in sbuff cell {}", idx);
+            dlassert!(idx < SBUFF_IDX_MAX);
+            self.sbuff_mask &= !(1 << idx);
+            return;
+        }
+
         let chunk = Chunk::from_mem(mem);
         let chunk_size = Chunk::size(chunk);
-        dlverbose!("ALLOC FREE: chunk[{:?}, 0x{:x}]", chunk, chunk_size);
+        dlverbose!("DL FREE: chunk[{:?}, 0x{:x}]", chunk, chunk_size);
         dlassert!(chunk_size >= MIN_CHUNK_SIZE);
 
         let chunk = self.extend_free_chunk(chunk, false);
