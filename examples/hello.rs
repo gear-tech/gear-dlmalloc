@@ -1,3 +1,5 @@
+#![cfg(feature = "global")]
+
 extern crate dlmalloc;
 extern crate rand;
 
@@ -21,11 +23,19 @@ struct Rectangle {
 
 #[cfg(target_os = "linux")]
 #[cfg(target_pointer_width = "64")]
-const END_ALLOCED_SIZE: usize = 0x60;
+const END_ALLOCED_SIZE: usize = 0x0;
+
+#[cfg(target_os = "linux")]
+#[cfg(target_pointer_width = "64")]
+const END_ALLOCED_SIZE_WITH_STDOUT: usize = 0x410;
 
 #[cfg(target_os = "macos")]
 #[cfg(target_pointer_width = "64")]
-const END_ALLOCED_SIZE: usize = 0x180;
+const END_ALLOCED_SIZE: usize = 0x70;
+
+#[cfg(target_os = "macos")]
+#[cfg(target_pointer_width = "64")]
+const END_ALLOCED_SIZE_WITH_STDOUT: usize = 0x480;
 
 #[inline(never)]
 fn test1() {
@@ -55,6 +65,7 @@ fn test2() {
         let mut rng = rand::thread_rng();
         let seed: u64 = rng.gen();
         let seed = seed % 10000;
+        println!("+++++++++++++++ seed == {}", seed);
         let mut rng = StdRng::seed_from_u64(seed);
 
         let mut v1: Vec<u64> = Vec::new();
@@ -82,7 +93,7 @@ fn test2() {
     unsafe {
         x = dlmalloc::get_alloced_mem_size();
     }
-    assert_eq!(x, END_ALLOCED_SIZE);
+    assert_eq!(x, END_ALLOCED_SIZE_WITH_STDOUT);
 }
 
 fn main() {
