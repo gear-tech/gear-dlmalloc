@@ -35,7 +35,7 @@ const END_ALLOCED_SIZE: usize = 0x70;
 
 #[cfg(target_os = "macos")]
 #[cfg(target_pointer_width = "64")]
-const END_ALLOCED_SIZE_WITH_STDOUT: usize = 0x0;
+const END_ALLOCED_SIZE_WITH_STDOUT: usize = 0x480;
 
 #[inline(never)]
 fn test1() {
