@@ -678,7 +678,8 @@ impl Dlmalloc {
     /// Malloc func for internal usage, see more in [Dlmalloc::malloc]
     unsafe fn malloc_internal(&mut self, size: usize, can_use_sbuff: bool) -> *mut u8 {
         // Tries to use memory from statcic buffer first if can.
-        if can_use_sbuff && self.seg.is_null() {
+        // TODO: disabled currently
+        if false && can_use_sbuff && self.seg.is_null() {
             let sbuff = &mut self.sbuff as *mut u8;
             dlassert!(sbuff as usize % MALIGN == 0);
             let idx = self.sbuff_size_to_idx(size);
