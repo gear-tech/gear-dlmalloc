@@ -13,6 +13,7 @@ use core::ptr::null_mut;
 
 use crate::dlassert;
 use crate::dlverbose;
+use crate::dlverbose_no_flush;
 use dlverbose::{DL_CHECKS, DL_VERBOSE, VERBOSE_DEL};
 use sys;
 
@@ -73,8 +74,8 @@ const TREEBIN_SHIFT: usize = 8;
 
 /// Sizes for each [Dlmalloc::sbuff] cell.
 /// Each hex number is size of one cell, for example 0x4321,
-/// means that first cell will have size 0x1, second 0x2,
-/// third 0x3 and forth 0x4.
+/// means that first cell will have size 0x1 * [MALIGN], second 0x2 * [MALIGN],
+/// third 0x3 * [MALIGN] and forth 0x4 * [MALIGN].
 const SBUFF_IDX_SIZES: usize = 0x86611;
 
 /// Max index which cell can have plus one.
@@ -675,6 +676,31 @@ impl Dlmalloc {
         ptr::null_mut()
     }
 
+    /// Zeroes chunk unused memory tail (for debug reasons only)
+    unsafe fn debug_zero_tail(ptr: *mut u8, req_size: usize, size: usize) {
+        for i in req_size..size {
+            *(ptr.add(i)) = 0;
+        }
+    }
+
+    /// Calculates memory interval: just sum all bytes values (for debug reasons only)
+    unsafe fn debug_mem_sum(ptr: *mut u8, size: usize) -> u64 {
+        let mut x: u64 = 0;
+        for i in 0..size {
+            x += *(ptr.add(i)) as u64;
+        }
+        x
+    }
+
+    /// Prints memory value from first to the last byte (for debug/log reasons only)
+    unsafe fn debug_print_mem(ptr: *mut u8, size: usize) {
+        for i in 0..size {
+            let x = *(ptr.add(i));
+            dlverbose_no_flush!("{:02X}", x);
+        }
+        dlverbose!("");
+    }
+
     /// Malloc func for internal usage, see more in [Dlmalloc::malloc]
     unsafe fn malloc_internal(&mut self, size: usize, can_use_sbuff: bool) -> *mut u8 {
         // Tries to use memory from statcic buffer first if can.
@@ -683,7 +709,7 @@ impl Dlmalloc {
             dlassert!(sbuff as usize % MALIGN == 0);
             let idx = self.sbuff_size_to_idx(size);
             if idx < SBUFF_IDX_MAX {
-                dlverbose!("DL MALLOC: use sbuff cell idx={}", idx);
+                dlverbose!("DL MALLOC: use sbuff cell {}", idx);
                 self.sbuff_mask |= (1 << idx);
                 return sbuff.add(Dlmalloc::sbuff_idx_to_offset(idx));
             }
@@ -2016,9 +2042,9 @@ impl Dlmalloc {
         if mem >= sbuff && mem <= sbuff.add(SBUFF_SIZE) {
             let offset = mem as usize - sbuff as usize;
             let idx = Dlmalloc::sbuff_offset_to_idx(offset);
-            dlverbose!("DL FREE: is in sbuff cell {}", idx);
             dlassert!(idx < SBUFF_IDX_MAX);
             self.sbuff_mask &= !(1 << idx);
+            dlverbose!("DL FREE: is in sbuff cell {}, sbuff_mask={:x}", idx, self.sbuff_mask);
             return;
         }
 
@@ -2078,6 +2104,17 @@ impl Dlmalloc {
         if !DL_VERBOSE {
             return;
         }
+
+        // Prints all cells info from self.sbuff
+        for i in 0..SBUFF_IDX_MAX {
+            let size = Dlmalloc::sbuff_idx_to_size(i);
+            if self.sbuff_mask & (1 << i) == 0 {
+                dlverbose!("[{}, -]", size);
+            } else {
+                dlverbose!("[{}, {}]", size, Dlmalloc::debug_mem_sum(self.sbuff.as_mut_ptr().add(Dlmalloc::sbuff_idx_to_offset(i)), size));
+            }
+        }
+
         let mut i = 0;
         let mut seg = self.seg;
         while !seg.is_null() {
@@ -2093,13 +2130,14 @@ impl Dlmalloc {
             let last_chunk = Segment::top(seg).sub(SEG_INFO_SIZE);
             while (chunk as *mut u8) < last_chunk {
                 dlverbose!(
-                    "SEG{} chunk [{:?}, {:?}]{}{} {}",
+                    "SEG{} chunk [{:?}, {:?}]{}{} {}, sum = {}",
                     i,
                     chunk,
                     Chunk::next(chunk),
                     if Chunk::cinuse(chunk) { "c" } else { "" },
                     if Chunk::pinuse(chunk) { "p" } else { "" },
-                    self.is_top_or_dv(chunk)
+                    self.is_top_or_dv(chunk),
+                    if Chunk::cinuse(chunk) { Dlmalloc::debug_mem_sum(Chunk::to_mem(chunk), Chunk::size(chunk) - PTR_SIZE) } else { 0 }
                 );
                 chunk = Chunk::next(chunk);
             }

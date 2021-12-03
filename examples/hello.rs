@@ -3,6 +3,8 @@
 extern crate dlmalloc;
 extern crate rand;
 
+use std::collections::LinkedList;
+
 use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
@@ -21,22 +23,6 @@ struct Rectangle {
     bottom_right: Point,
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(target_pointer_width = "64")]
-const END_ALLOCED_SIZE: usize = 0x0;
-
-#[cfg(target_os = "linux")]
-#[cfg(target_pointer_width = "64")]
-const END_ALLOCED_SIZE_WITH_STDOUT: usize = 0x410;
-
-#[cfg(target_os = "macos")]
-#[cfg(target_pointer_width = "64")]
-const END_ALLOCED_SIZE: usize = 0x70;
-
-#[cfg(target_os = "macos")]
-#[cfg(target_pointer_width = "64")]
-const END_ALLOCED_SIZE_WITH_STDOUT: usize = 0x480;
-
 #[inline(never)]
 fn test1() {
     {
@@ -52,11 +38,6 @@ fn test1() {
         assert!(r.bottom_right.x == 1);
         assert!(r.bottom_right.y == 2);
     }
-    let x: usize;
-    unsafe {
-        x = dlmalloc::get_alloced_mem_size();
-    }
-    assert_eq!(x, END_ALLOCED_SIZE);
 }
 
 #[inline(never)]
@@ -70,30 +51,33 @@ fn test2() {
 
         let mut v1: Vec<u64> = Vec::new();
         let mut v2: Vec<u64> = Vec::new();
+        let mut l1: LinkedList<u8> = LinkedList::new();
+        let mut l2: LinkedList<u8> = LinkedList::new();
 
-        for _ in 0..1000 {
-            let rem_number: usize = rng.gen_range(0, 1000);
-            let add_number: usize = rng.gen_range(rem_number, rem_number + 100);
+        for i in 0..100 {
+            println!("{}", i);
+            let rem_number: usize = rng.gen_range(0, 100);
+            let add_number: usize = rng.gen_range(rem_number, rem_number + 10);
             for _ in 0..add_number {
                 let val: u64 = rng.gen();
                 v1.push(val);
                 v2.push(val);
+                let val: u8 = rng.gen();
+                l1.push_back(val);
+                l2.push_back(val);
             }
             for _ in 0..rem_number {
                 assert_eq!(v1.len(), v2.len());
                 let index: usize = rng.gen_range(0, v1.len());
                 v1.remove(index);
                 v2.remove(index);
+                l1.pop_back();
+                l2.pop_back();
             }
-            assert_eq!(v1, v2);
         }
+        assert_eq!(v1, v2);
+        assert_eq!(l1, l2);
     }
-
-    let x: usize;
-    unsafe {
-        x = dlmalloc::get_alloced_mem_size();
-    }
-    assert_eq!(x, END_ALLOCED_SIZE_WITH_STDOUT);
 }
 
 fn main() {

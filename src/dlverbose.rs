@@ -40,6 +40,15 @@ pub fn dlprint_fn(args: Arguments<'_>) {
     }
 }
 
+/// Prints string with args.
+/// What is the out stream defines in @ext module.
+#[inline(never)]
+pub fn dlwrite_fn(args: Arguments<'_>) {
+    unsafe {
+        core::fmt::write(&mut OUT_BUFFER, args).unwrap();
+    }
+}
+
 /// Prints string with args if @DL_VERBOSE is set.
 /// What is the out stream defines in @ext module.
 #[macro_export]
@@ -47,6 +56,17 @@ macro_rules! dlverbose {
     ($($arg:tt)*) => {
         if crate::dlverbose::DL_VERBOSE {
             crate::dlverbose::dlprint_fn(format_args!($($arg)*))
+        }
+    }
+}
+
+/// Prints string with args if @DL_VERBOSE is set.
+/// What is the out stream defines in @ext module.
+#[macro_export]
+macro_rules! dlverbose_no_flush {
+    ($($arg:tt)*) => {
+        if crate::dlverbose::DL_VERBOSE {
+            crate::dlverbose::dlwrite_fn(format_args!($($arg)*))
         }
     }
 }
