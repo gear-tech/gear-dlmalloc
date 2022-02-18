@@ -1,3 +1,4 @@
+
 use core::ptr;
 
 use crate::dlassert;
@@ -6,14 +7,18 @@ mod gear_core {
     extern "C" {
         pub fn alloc(pages: u32) -> usize;
         pub fn free(page: u32);
+        pub static heap_base: i32;
     }
 }
+
 
 pub fn page_size() -> usize {
     64 * 1024
 }
 
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
+    crate::dlverbose!("Hi {}", gear_core::heap_base);
+
     let pages = size / page_size();
     let prev = gear_core::alloc(pages as _);
     if prev == usize::max_value() {

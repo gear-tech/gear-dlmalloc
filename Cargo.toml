@@ -34,10 +34,11 @@ static_assertions = "1.1"
 rand = "0.7.3"
 
 [features]
-default = ["global"]
+default = ["global", "asm_experimental_arch"]
 # Enable implementations of the `GlobalAlloc` standard library API, exporting a
 # new `GlobalDlmalloc` as well which implements this trait.
 global = []
+asm_experimental_arch = []
 
 # Enable very expensive debug checks in this crate
 debug = []

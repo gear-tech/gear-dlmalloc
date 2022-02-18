@@ -31,6 +31,12 @@ unsafe impl GlobalAlloc for GlobalDlmalloc {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub unsafe extern "C" fn init_alloc(heap_base: i32) {
+    <Dlmalloc>::init_dlmalloc(&mut get(), heap_base);
+}
+
 /// Returns malloced size
 pub unsafe fn get_alloced_mem_size() -> usize {
     <Dlmalloc>::get_alloced_mem_size(&get())
