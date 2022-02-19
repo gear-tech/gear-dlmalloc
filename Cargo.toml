@@ -29,18 +29,17 @@ compiler_builtins = { version = '0.1.0', optional = true }
 str-buf = "2.0.2"
 static_assertions = "1.1"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 page_size = "0.4.2"
 
 [dev-dependencies]
 rand = "0.7.3"
 
 [features]
-default = ["global", "asm_experimental_arch"]
+default = ["global"]
 # Enable implementations of the `GlobalAlloc` standard library API, exporting a
 # new `GlobalDlmalloc` as well which implements this trait.
 global = []
-asm_experimental_arch = []
 
 # Enable very expensive debug checks in this crate
 debug = []

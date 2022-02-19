@@ -782,7 +782,7 @@ impl Dlmalloc {
     /// cell in [SBUFF_IDX_OFFSETS] and [SBUFF_IDX_SIZES].
     ///
     /// If there is no free cells in static buffer or requested size is not small enought,
-    /// then we request system for memory interval begger then [DEFAULT_GRANULARITY].
+    /// then we request system for memory interval bigger then [DEFAULT_GRANULARITY].
     /// This memory is added as segment in segments list, head is [Dlmalloc::seg].
     /// see more in [Dlmalloc::sys_alloc]
     /// So, after that there is some available memory in allocator context.
@@ -2159,23 +2159,23 @@ impl Dlmalloc {
         }
 
         // Prints all cells info from self.sbuff
-        // for i in 0..SBUFF_IDX_MAX {
-        //     let size = Dlmalloc::sbuff_idx_to_size(i);
-        //     if self.sbuff_mask & (1 << i) == 0 {
-        //         dlverbose!("[{}, -]", size);
-        //     } else {
-        //         dlverbose!(
-        //             "[{}, {}]",
-        //             size,
-        //             Dlmalloc::debug_mem_sum(
-        //                 self.sbuff
-        //                     .as_mut_ptr()
-        //                     .add(Dlmalloc::sbuff_idx_to_offset(i)),
-        //                 size
-        //             )
-        //         );
-        //     }
-        // }
+        for i in 0..SBUFF_IDX_MAX {
+            let size = Dlmalloc::sbuff_idx_to_size(i);
+            if self.sbuff_mask & (1 << i) == 0 {
+                dlverbose!("[{}, -]", size);
+            } else {
+                dlverbose!(
+                    "[{}, {}]",
+                    size,
+                    Dlmalloc::debug_mem_sum(
+                        self.sbuff
+                            .as_mut_ptr()
+                            .add(Dlmalloc::sbuff_idx_to_offset(i)),
+                        size
+                    )
+                );
+            }
+        }
 
         let mut i = 0;
         let mut seg = self.seg;

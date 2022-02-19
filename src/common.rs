@@ -1,16 +1,19 @@
 use crate::dlassert;
 use crate::sys;
 
-///Returns min number which >= a and which is aligned by `alignment`
+/// Returns min number which is >= `a` and aligned by `alignment`
 pub fn align_up(a: usize, alignment: usize) -> usize {
     dlassert!(alignment.is_power_of_two());
     (a + (alignment - 1)) & !(alignment - 1)
 }
 
+/// Returns max number which is <= `a` and aligned by `alignment`
 pub fn align_down(a: usize, alignemnt: usize) -> usize {
     (a / alignemnt) * alignemnt
 }
 
+/// Returns cropped memory interval in which memory can be successfully freed.
+/// Actually retuerns addr and size must be aligned to page_size.
 pub unsafe fn get_free_borders(ptr: *mut u8, size: usize) -> (*mut u8, usize) {
     if size < sys::page_size() {
         return (ptr, 0);
