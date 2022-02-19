@@ -21,6 +21,7 @@ use core::ptr;
 
 mod dlmalloc;
 mod dlverbose;
+mod common;
 
 #[cfg(all(feature = "global", not(test)))]
 mod global;
@@ -56,16 +57,6 @@ impl Dlmalloc {
     /// Creates a new instance of an allocator, same as `DLMALLOC_INIT`.
     pub fn new() -> Dlmalloc {
         DLMALLOC_INIT
-    }
-
-    /// lol
-    #[cfg(target_arch = "wasm32")]
-    #[inline]
-    pub unsafe fn init_dlmalloc(&mut self, heap_base: i32) {
-        let ps = sys::page_size();
-        let heap_base = heap_base as usize;
-        let page_begin = (heap_base / ps) * ps;
-        self.0.init_dlmalloc(page_begin, ps, heap_base)
     }
 
     /// Allocates `size` bytes with `align` align.

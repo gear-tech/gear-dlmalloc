@@ -14,6 +14,7 @@ use core::ptr::null_mut;
 use crate::dlassert;
 use crate::dlverbose;
 use crate::dlverbose_no_flush;
+use crate::common::{align_up, align_down};
 use dlverbose::{DL_CHECKS, DL_VERBOSE, VERBOSE_DEL};
 use sys;
 
@@ -357,6 +358,7 @@ struct Segment {
 pub struct Dlmalloc {
     /// Static memory buffer, it uses to alloc small memory
     /// requests, if there is no allocated memory yet.
+    /// TODO: move it to dynamic initialization
     sbuff: [u8; SBUFF_SIZE],
     /// Mark sbuff cells which is in use.
     sbuff_mask: u8,
@@ -380,6 +382,8 @@ pub struct Dlmalloc {
     /// Pointer to the first segment in segments list.
     /// Null if list is empty.
     seg: *mut Segment,
+    /// TODO
+    preinstallation_is_done: bool,
     /// The least allocated addr in self live (for checks only)
     least_addr: *mut u8,
 }
@@ -398,21 +402,24 @@ pub const DLMALLOC_INIT: Dlmalloc = Dlmalloc {
     seg: 0 as *mut _,
     sbuff: [0; SBUFF_SIZE],
     sbuff_mask: 0,
+    preinstallation_is_done: false,
     least_addr: 0 as *mut _,
 };
 
-/// Returns min number which >= a and which is aligned by `alignment`
-fn align_up(a: usize, alignment: usize) -> usize {
-    dlassert!(alignment.is_power_of_two());
-    (a + (alignment - 1)) & !(alignment - 1)
-}
-
 fn to_pinuse(prev_in_use: bool) -> usize {
-    if prev_in_use { PINUSE } else { 0 }
+    if prev_in_use {
+        PINUSE
+    } else {
+        0
+    }
 }
 
 fn to_cinuse(curr_in_use: bool) -> usize {
-    if curr_in_use { CINUSE } else { 0 }
+    if curr_in_use {
+        CINUSE
+    } else {
+        0
+    }
 }
 
 /// TODO: something for binary trees search
@@ -571,8 +578,13 @@ impl Dlmalloc {
         SBUFF_IDX_MAX
     }
 
-    /// lol
-    pub unsafe fn init_dlmalloc(&mut self, page_begin: usize, page_size: usize, heap_base: usize) {
+    /// Currently used only for wasm32 target.
+    /// If there is memory, which is already alloced by system for current program,
+    /// then here we add this memory to allocator context.
+    pub unsafe fn preinstalled_memory(&mut self, page_begin: usize, page_size: usize, heap_base: usize) {
+        dlassert!(!self.preinstallation_is_done);
+        self.preinstallation_is_done = true;
+
         dlverbose!(
             "DL INIT: page_begin = {:#x} page_size = {:#x} heap_base = {:#x}",
             page_begin,
@@ -602,25 +614,17 @@ impl Dlmalloc {
             return;
         }
 
-        let req_chunk = self.append_mem_in_alloc_ctx(page_begin as *mut u8, page_size, 0u32);
+        let size = page_end - heap_base;
+        let req_chunk = self.append_mem_in_alloc_ctx(heap_base as *mut u8, size, 0u32);
         dlverbose!(
             "{:?} {:#x} {:#x}",
             req_chunk,
             page_begin,
             Chunk::size(req_chunk)
         );
-        dlassert!(req_chunk as usize == page_begin);
-        dlassert!(Chunk::size(req_chunk) == page_size - SEG_INFO_SIZE);
+        dlassert!(req_chunk as usize == heap_base);
+        dlassert!(Chunk::size(req_chunk) == size - SEG_INFO_SIZE);
         dlassert!(self.top == req_chunk);
-
-        (*req_chunk).head = (heap_base - page_begin) | CINUSE | PINUSE;
-
-        self.top = Chunk::next(req_chunk);
-        self.topsize = page_end - heap_base - SEG_INFO_SIZE;
-        (*self.top).head = self.topsize | PINUSE;
-
-        self.print_segments();
-        self.check_malloc_state();
     }
 
     /// If there is chunk in tree/smallbins/top/dv which has size >= `chunk_size`,
@@ -782,7 +786,6 @@ impl Dlmalloc {
         }
         let mem = Chunk::to_mem(chunk);
         self.check_malloced_mem(mem, size);
-        self.check_malloc_state();
         mem
     }
 
@@ -842,24 +845,46 @@ impl Dlmalloc {
     /// if there is already some segments, which is neighbor, then
     /// merge old segments with a new one.
     unsafe fn sys_alloc(&mut self, size: usize) -> *mut u8 {
-        dlverbose!("SYS_ALLOC: size = 0x{:x}", size);
-
-        self.check_malloc_state();
+        dlverbose!("DL SYS ALLOC: size = 0x{:x}", size);
 
         if size >= self.max_chunk_size() {
             return ptr::null_mut();
         }
 
-        // keep in sync with max_request
-        let aligned_size = align_up(size + SEG_INFO_SIZE + MALIGN, DEFAULT_GRANULARITY);
+        let mut req_chunk = if !self.preinstallation_is_done {
+            // First call of sys_alloc tries to use preinstalled memory,
+            // but first we must initialize it if there is one.
+            dlassert!(self.seg.is_null());
+            let heap = sys::get_heap_base();
+            if heap == 0 {
+                return ptr::null_mut();
+            }
+            let page_begin = align_down(heap, sys::page_size());
+            self.preinstalled_memory(page_begin, sys::page_size(), heap);
+            if self.topsize >= size {
+                self.top
+            } else {
+                ptr::null_mut()
+            }
+        } else {
+            ptr::null_mut()
+        };
 
-        let (alloced_base, alloced_size, flags) = sys::alloc(aligned_size);
-        if alloced_base.is_null() {
-            return alloced_base;
+        if req_chunk.is_null() {
+            let aligned_size = align_up(size + SEG_INFO_SIZE + MALIGN, DEFAULT_GRANULARITY);
+            let (alloced_base, alloced_size, flags) = sys::alloc(aligned_size);
+            dlverbose!(
+                "DL SYS ALLOC: new mem {:?} 0x{:x}",
+                alloced_base,
+                alloced_size
+            );
+
+            if alloced_base.is_null() {
+                return alloced_base;
+            }
+
+            req_chunk = self.append_mem_in_alloc_ctx(alloced_base, alloced_size, flags);
         }
-        dlverbose!("SYS_ALLOC: new mem {:?} 0x{:x}", alloced_base, alloced_size);
-
-        let req_chunk = self.append_mem_in_alloc_ctx(alloced_base, alloced_size, flags);
 
         if self.top.is_null() {
             // Looking for a new top
@@ -888,13 +913,10 @@ impl Dlmalloc {
             self.check_top_chunk(self.top);
         }
 
-        self.print_segments();
-
         dlassert!(Chunk::size(req_chunk) >= size);
 
-        if Chunk::size(req_chunk) > size {
-            // Crop and free the remainder
-            self.crop_chunk(req_chunk, req_chunk, size, false);
+        if self.crop_chunk(req_chunk, req_chunk, size, false) {
+            // Free the remainder
             let next_chunk = Chunk::next(req_chunk);
             self.free_chunk(next_chunk);
         }
@@ -911,7 +933,7 @@ impl Dlmalloc {
     ) -> *mut Chunk {
         let mut req_chunk;
         if self.seg.is_null() {
-            dlverbose!("SYS_ALLOC: it's a newest mem");
+            dlverbose!("DL APPEND: it's a newest mem");
             self.update_least_addr(alloced_base);
             self.add_segment(alloced_base, alloced_size, flags);
             // TODO: make it in constructor
@@ -935,7 +957,7 @@ impl Dlmalloc {
             if !seg.is_null() {
                 // If there is then add alloced mem to the @seg
                 dlverbose!(
-                    "SYS_ALLOC: find seg before [{:?}, {:?}, 0x{:x}]",
+                    "DL APPEND: find seg before [{:?}, {:?}, 0x{:x}]",
                     (*seg).base,
                     (*seg).end(),
                     (*seg).size
@@ -958,7 +980,7 @@ impl Dlmalloc {
             }
             if !seg.is_null() {
                 dlverbose!(
-                    "SYS_ALLOC: find seg after [{:?}, {:?}, 0x{:x}]",
+                    "DL APPEND: find seg after [{:?}, {:?}, 0x{:x}]",
                     (*seg).base,
                     (*seg).end(),
                     (*seg).size
@@ -1957,7 +1979,7 @@ impl Dlmalloc {
         );
 
         let mem_to_free_size = mem_to_free_end as usize - mem_to_free as usize;
-        let (mem_to_free, mem_to_free_size) = sys::free_borders(mem_to_free, mem_to_free_size);
+        let (mem_to_free, mem_to_free_size) = sys::get_free_borders(mem_to_free, mem_to_free_size);
         let mem_to_free_end = mem_to_free.add(mem_to_free_size);
         dlverbose!(
             "DL FREE: mem can be freed by system [{:?}, {:?}]",
@@ -1997,15 +2019,13 @@ impl Dlmalloc {
         self.crop_chunk(chunk, crop_chunk, crop_chunk_size, true);
 
         let next_seg = (*seg).next;
-        let before_rem_pinuse = to_pinuse(crop_chunk as usize == seg_base as usize);
         let after_rem_pinuse = to_pinuse(after_seg_size > 0 && Chunk::pinuse((*seg).info_chunk()));
 
         let success = sys::free(mem_to_free, mem_to_free_size);
         dlassert!(success);
 
         if before_seg_size != 0 {
-            let before_seg_info =
-                self.set_segment_info(seg_base, before_seg_size, 0);
+            let before_seg_info = self.set_segment_info(seg_base, before_seg_size, 0);
 
             dlverbose!(
                 "DL FREE: before seg [{:?}, {:?}]",
@@ -2051,9 +2071,6 @@ impl Dlmalloc {
         } else {
             (*prev_seg).next = next_seg;
         }
-
-        self.check_malloc_state();
-        self.print_segments();
     }
 
     /// When user call free mem, in our context it means - free one chunk.
@@ -2091,7 +2108,6 @@ impl Dlmalloc {
         dlverbose!("{}", VERBOSE_DEL);
         dlverbose!("DL FREE CALL: mem={:?}", mem);
         self.print_segments();
-
         self.check_malloc_state();
 
         // Separate handling for memory which was allocated in
@@ -2167,23 +2183,23 @@ impl Dlmalloc {
         }
 
         // Prints all cells info from self.sbuff
-        for i in 0..SBUFF_IDX_MAX {
-            let size = Dlmalloc::sbuff_idx_to_size(i);
-            if self.sbuff_mask & (1 << i) == 0 {
-                dlverbose!("[{}, -]", size);
-            } else {
-                dlverbose!(
-                    "[{}, {}]",
-                    size,
-                    Dlmalloc::debug_mem_sum(
-                        self.sbuff
-                            .as_mut_ptr()
-                            .add(Dlmalloc::sbuff_idx_to_offset(i)),
-                        size
-                    )
-                );
-            }
-        }
+        // for i in 0..SBUFF_IDX_MAX {
+        //     let size = Dlmalloc::sbuff_idx_to_size(i);
+        //     if self.sbuff_mask & (1 << i) == 0 {
+        //         dlverbose!("[{}, -]", size);
+        //     } else {
+        //         dlverbose!(
+        //             "[{}, {}]",
+        //             size,
+        //             Dlmalloc::debug_mem_sum(
+        //                 self.sbuff
+        //                     .as_mut_ptr()
+        //                     .add(Dlmalloc::sbuff_idx_to_offset(i)),
+        //                 size
+        //             )
+        //         );
+        //     }
+        // }
 
         let mut i = 0;
         let mut seg = self.seg;
@@ -2225,6 +2241,8 @@ impl Dlmalloc {
 
             seg = (*seg).next;
         }
+
+        dlverbose!(r"\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/");
     }
 
     // Sanity checks

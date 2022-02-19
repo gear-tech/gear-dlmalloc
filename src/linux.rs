@@ -2,6 +2,14 @@ extern crate libc;
 
 use core::ptr;
 
+pub fn page_size() -> usize {
+    page_size::get()
+}
+
+pub fn get_heap_base() -> usize {
+    0
+}
+
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
     let addr = libc::mmap(
         ptr::null_mut(),
@@ -21,6 +29,8 @@ pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
 pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
     libc::munmap(ptr as *mut _, size) == 0
 }
+
+pub use crate::common::get_free_borders;
 
 #[cfg(feature = "global")]
 static mut LOCK: libc::pthread_mutex_t = libc::PTHREAD_MUTEX_INITIALIZER;
