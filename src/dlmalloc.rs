@@ -581,48 +581,27 @@ impl Dlmalloc {
     /// Currently used only for wasm32 target.
     /// If there is memory, which is already alloced by system for current program,
     /// then here we add this memory to allocator context.
-    pub unsafe fn preinstalled_memory(&mut self, page_begin: usize, page_size: usize, heap_base: usize) {
+    pub unsafe fn init_preinstalled_memory(&mut self, mem_begin: usize, mem_end: usize) {
         dlassert!(!self.preinstallation_is_done);
         self.preinstallation_is_done = true;
 
         dlverbose!(
-            "DL INIT: page_begin = {:#x} page_size = {:#x} heap_base = {:#x}",
-            page_begin,
-            page_size,
-            heap_base
+            "DL INIT PREINSALLED MEMORY: mem_begin = {:#x}, mem_end = {:#x}",
+            mem_begin,
+            mem_end,
         );
 
         dlassert!(self.seg.is_null());
-        dlassert!(page_begin % MALIGN == 0);
-        dlassert!(page_begin <= heap_base);
-        dlassert!(page_begin + page_size > heap_base);
+        dlassert!(mem_end % DEFAULT_GRANULARITY == 0);
 
-        let mut heap_base = align_up(heap_base, MALIGN);
-
-        if page_begin == heap_base {
+        let mem_begin  = align_up(mem_begin, MALIGN);
+        let size = mem_end - mem_begin;
+        if size == 0 {
             return;
         }
 
-        // Because half-chunks cannot be in use, then static page data chunk
-        // must have at least [MIN_CHUNK_SIZE] len.
-        if heap_base - page_begin < MIN_CHUNK_SIZE {
-            heap_base = page_begin + MIN_CHUNK_SIZE;
-        }
-
-        let page_end = page_begin + page_size;
-        if heap_base + MIN_CHUNK_SIZE + SEG_INFO_SIZE >= page_end {
-            return;
-        }
-
-        let size = page_end - heap_base;
-        let req_chunk = self.append_mem_in_alloc_ctx(heap_base as *mut u8, size, 0u32);
-        dlverbose!(
-            "{:?} {:#x} {:#x}",
-            req_chunk,
-            page_begin,
-            Chunk::size(req_chunk)
-        );
-        dlassert!(req_chunk as usize == heap_base);
+        let req_chunk = self.append_mem_in_alloc_ctx(mem_begin as *mut u8, size, 0u32);
+        dlassert!(req_chunk as usize == mem_begin);
         dlassert!(Chunk::size(req_chunk) == size - SEG_INFO_SIZE);
         dlassert!(self.top == req_chunk);
     }
@@ -853,14 +832,13 @@ impl Dlmalloc {
 
         let mut req_chunk = if !self.preinstallation_is_done {
             // First call of sys_alloc tries to use preinstalled memory,
-            // but first we must initialize it if there is one.
+            // but before we must initialize it if there is one.
             dlassert!(self.seg.is_null());
-            let heap = sys::get_heap_base();
-            if heap == 0 {
+            let (mem_addr, mem_size) = sys::get_preinstalled_memory();
+            if mem_size == 0 {
                 return ptr::null_mut();
             }
-            let page_begin = align_down(heap, sys::page_size());
-            self.preinstalled_memory(page_begin, sys::page_size(), heap);
+            self.init_preinstalled_memory(mem_addr, mem_addr + mem_size);
             if self.topsize >= size {
                 self.top
             } else {

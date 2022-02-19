@@ -1,5 +1,6 @@
-use core::ptr;
 use crate::dlassert;
+use core::ptr;
+use crate::common::align_down;
 
 mod gear_core {
     extern "C" {
@@ -12,12 +13,18 @@ extern "C" {
     static __heap_base: i32;
 }
 
-pub unsafe fn get_heap_base() -> usize {
-    &__heap_base as *const i32 as usize
-}
-
 pub fn page_size() -> usize {
     64 * 1024
+}
+
+pub unsafe fn get_preinstalled_memory() -> (usize, usize) {
+    let heap_base = &__heap_base as *const i32 as usize;
+    let page_begin = align_down(heap_base, page_size());
+    if page_begin == heap_base {
+        (heap_base, 0)
+    } else {
+        (heap_base, page_begin + page_size() - heap_base)
+    }
 }
 
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
