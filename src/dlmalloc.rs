@@ -839,9 +839,6 @@ impl Dlmalloc {
             // but before we must initialize it if there is one.
             dlassert!(self.seg.is_null());
             let (mem_addr, mem_size) = sys::get_preinstalled_memory();
-            if mem_size == 0 {
-                return ptr::null_mut();
-            }
             self.init_preinstalled_memory(mem_addr, mem_addr + mem_size);
             if self.topsize >= size {
                 self.top
