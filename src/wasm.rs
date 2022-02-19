@@ -17,8 +17,13 @@ pub fn page_size() -> usize {
     64 * 1024
 }
 
+/// Page where static data is allocated must be already in wasm linear memory.
+/// A pointer where heap can be is defined by compiler in global `__heap_base`.
+/// We use this addr to init remainder of page for heap allocations.
 pub unsafe fn get_preinstalled_memory() -> (usize, usize) {
+    // strage thing, but we must take `__heap_base` addr to get heap base address.
     let heap_base = &__heap_base as *const i32 as usize;
+
     let page_begin = align_down(heap_base, page_size());
     if page_begin == heap_base {
         (heap_base, 0)

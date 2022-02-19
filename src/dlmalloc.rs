@@ -38,7 +38,7 @@ const MIN_CHUNK_SIZE: usize = mem::size_of::<Chunk>();
 const MIN_MEM_SIZE: usize = MIN_CHUNK_SIZE - PTR_SIZE;
 /// Segments info size = size of seg info chunk + border chunk size, see more [Segment]
 const SEG_INFO_SIZE: usize = CHUNK_MEM_OFFSET + SEG_SIZE + PTR_SIZE;
-/// Default granularity is alignment for segments
+/// Default granularity is min size for system memory allocation and free.
 const DEFAULT_GRANULARITY: usize = 64 * 1024; // 64 kBytes
 
 static_assertions::const_assert!(2 * MALIGN == CHUNK_SIZE);
@@ -296,7 +296,7 @@ struct TreeChunk {
     index: u32,
 }
 
-/// Segment is a big memory interval aligned by [DEFAULT_GRANULARITY]
+/// Segment is continuous memory section, which we occupied for allocations.
 /// Segment info stored inside segment memory in the end:
 /// ````
 ///                               Border chunk begin    Border chunk end
@@ -352,6 +352,8 @@ struct Segment {
 /// 4) If no heap memory is allocated yet, then dlmalloc use static
 /// buffer for small requests allocations, in order to increase
 /// allocation performance. See more in [Dlmalloc::malloc].
+/// 5) Some memory can be preinistalled by system,
+/// this memory is added in context in [Dlmalloc::sys_alloc] first call.
 ///
 #[repr(align(16))]
 #[repr(C)]
@@ -382,7 +384,7 @@ pub struct Dlmalloc {
     /// Pointer to the first segment in segments list.
     /// Null if list is empty.
     seg: *mut Segment,
-    /// TODO
+    /// Whether preinstalled memory inititializtion has been done?
     preinstallation_is_done: bool,
     /// The least allocated addr in self live (for checks only)
     least_addr: *mut u8,
@@ -780,7 +782,7 @@ impl Dlmalloc {
     /// cell in [SBUFF_IDX_OFFSETS] and [SBUFF_IDX_SIZES].
     ///
     /// If there is no free cells in static buffer or requested size is not small enought,
-    /// then we request system for memory interval aligned by [DEFAULT_GRANULARITY].
+    /// then we request system for memory interval begger then [DEFAULT_GRANULARITY].
     /// This memory is added as segment in segments list, head is [Dlmalloc::seg].
     /// see more in [Dlmalloc::sys_alloc]
     /// So, after that there is some available memory in allocator context.
@@ -823,6 +825,8 @@ impl Dlmalloc {
     /// Adds new memory interval as segment in allocator context,
     /// if there is already some segments, which is neighbor, then
     /// merge old segments with a new one.
+    /// Addtionally, if there is preinstalled memory,
+    /// then we tries to init and use it.
     unsafe fn sys_alloc(&mut self, size: usize) -> *mut u8 {
         dlverbose!("DL SYS ALLOC: size = 0x{:x}", size);
 
@@ -2053,21 +2057,18 @@ impl Dlmalloc {
 
     /// When user call free mem, in our context it means - free one chunk.
     /// There can be already free neighbor chunks, so we extend our chunk
-    /// to all free chunks around. Then if chunk is big enought we can return some memory to system.
-    /// To understand what memory can be returned to system, you should now one simple rule:
-    /// segments has size aligned by [DEFAULT_GRANULARITY]. So, when we return memory to the system,
-    /// we may change segments size or delete some segments or create new segments,
-    /// and in all cases we always must satisfy this rule.
+    /// to all free chunks around. Then if chunk is big enought we can return some memory to the system.
+    /// The size of interval that can be free cannot be less then [DEFAULT_GRANULARITY]
+    /// and also must satisfy system restrictions.
     /// Let's see an example:
     /// ````
-    ///  Segment begin    Default granularity                       Segment end
-    ///  |                |               \                                  |
-    ///  [================|========(=======|================|====)===========]
+    ///  Segment begin                   Can be free by system            Segment end
+    ///  |                                  /              \                 |
+    ///  [=========================(=======|================|====)===========]
     ///                            |                             |
     ///                            Chunk begin                   Chunk end
     /// ````
     /// Here chunk is free, and we want to return some part of chunk's memory to the system.
-    /// To avoid unaligned segments, we call system free for only one granuality part:
     /// ````
     ///  Segment1                                           Segment
     ///  |                                                  |

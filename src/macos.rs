@@ -6,9 +6,6 @@ pub fn page_size() -> usize {
     page_size::get()
 }
 
-pub fn get_heap_base() -> usize {
-    0
-}
 pub unsafe fn get_preinstalled_memory() -> (usize, usize) {
     (0, 0)
 }
