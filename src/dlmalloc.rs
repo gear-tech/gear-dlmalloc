@@ -11,10 +11,10 @@ use core::mem;
 use core::ptr;
 use core::ptr::null_mut;
 
+use crate::common::{align_down, align_up};
 use crate::dlassert;
 use crate::dlverbose;
 use crate::dlverbose_no_flush;
-use crate::common::{align_up, align_down};
 use dlverbose::{DL_CHECKS, DL_VERBOSE, VERBOSE_DEL};
 use sys;
 
@@ -86,7 +86,7 @@ const SBUFF_IDX_MAX: usize = {
     let mut idx = 0;
     while sizes != 0 {
         idx += 1;
-        sizes = sizes >> 4;
+        sizes >>= 4;
     }
     idx
 };
@@ -101,7 +101,7 @@ const SBUFF_SIZE: usize = {
     let mut res = 0;
     while sizes != 0 {
         res += sizes & 0xF;
-        sizes = sizes >> 4;
+        sizes >>= 4;
     }
     res * MALIGN
 };
@@ -116,7 +116,7 @@ const SBUFF_IDX_OFFSETS: usize = {
         res += offset << idx;
         offset += sizes & 0xF;
         idx += 4;
-        sizes = sizes >> 4;
+        sizes >>= 4;
     }
     res
 };
@@ -596,7 +596,7 @@ impl Dlmalloc {
         dlassert!(self.seg.is_null());
         dlassert!(mem_end % DEFAULT_GRANULARITY == 0);
 
-        let mem_begin  = align_up(mem_begin, MALIGN);
+        let mem_begin = align_up(mem_begin, MALIGN);
         let size = mem_end - mem_begin;
         if size == 0 {
             return;
@@ -889,7 +889,7 @@ impl Dlmalloc {
                 self.top = chunk;
                 self.topsize = size;
             }
-            if self.top != ptr::null_mut() {
+            if !self.top.is_null() {
                 self.unlink_chunk(self.top);
             }
             self.check_top_chunk(self.top);

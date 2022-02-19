@@ -1,5 +1,5 @@
-use crate::sys;
 use crate::dlassert;
+use crate::sys;
 
 ///Returns min number which >= a and which is aligned by `alignment`
 pub fn align_up(a: usize, alignment: usize) -> usize {

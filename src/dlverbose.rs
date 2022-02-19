@@ -1,7 +1,7 @@
 use core::fmt::Arguments;
 
 pub static DL_CHECKS: bool = true; // cfg!(feature = "debug");
-pub static DL_VERBOSE: bool =  false; // cfg!(feature = "verbose");
+pub static DL_VERBOSE: bool = false; // cfg!(feature = "verbose");
 pub static VERBOSE_DEL: &str = "====================================";
 
 #[cfg(unix)]

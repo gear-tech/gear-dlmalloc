@@ -1,6 +1,6 @@
+use crate::common::align_down;
 use crate::dlassert;
 use core::ptr;
-use crate::common::align_down;
 
 mod gear_core {
     extern "C" {
