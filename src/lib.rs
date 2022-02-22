@@ -19,6 +19,7 @@
 use core::cmp;
 use core::ptr;
 
+mod common;
 mod dlmalloc;
 mod dlverbose;
 
