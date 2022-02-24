@@ -4,10 +4,17 @@ pub static DL_CHECKS: bool = cfg!(feature = "debug");
 pub static DL_VERBOSE: bool = cfg!(feature = "verbose");
 pub static VERBOSE_DEL: &str = "====================================";
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(unix)]
 mod ext {
     pub fn debug(s: &str, _size: usize) {
         libc_print::libc_println!("{}", s);
+    }
+}
+
+#[cfg(windows)]
+mod ext {
+    pub fn debug(_s: &str, _size: usize) {
+        unreachable!("windows is unsupported");
     }
 }
 
