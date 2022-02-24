@@ -4,7 +4,7 @@ pub static DL_CHECKS: bool = cfg!(feature = "debug");
 pub static DL_VERBOSE: bool = cfg!(feature = "verbose");
 pub static VERBOSE_DEL: &str = "====================================";
 
-#[cfg(unix)]
+#[cfg(not(target_arch = "wasm32"))]
 mod ext {
     pub fn debug(s: &str, _size: usize) {
         libc_print::libc_println!("{}", s);
