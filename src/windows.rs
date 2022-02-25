@@ -1,5 +1,5 @@
 //! Windows is unsupported currently.
-//! It means, that you cannot use this allocator in native windows programs.
+//! It means, that you cannot use this allocator in native Windows programs.
 
 pub fn page_size() -> usize {
     unreachable!("Windows is unsupported");
