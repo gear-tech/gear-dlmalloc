@@ -14,7 +14,7 @@ mod ext {
 #[cfg(windows)]
 mod ext {
     pub fn debug(_s: &str, _size: usize) {
-        unreachable!("windows is unsupported");
+        unreachable!("Windows is unsupported");
     }
 }
 
