@@ -1,30 +1,55 @@
-//! Windows is unsupported currently.
-//! It means, that you cannot use this allocator in native Windows programs.
+extern crate windows;
 
-pub fn page_size() -> usize {
-    unreachable!("Windows is unsupported");
-}
+use crate::dlassert;
+use core::ptr;
+use core::ffi::{c_void};
+use once_cell::sync::Lazy;
 
-pub unsafe fn get_preinstalled_memory() -> (usize, usize) {
-    unreachable!("Windows is unsupported");
-}
+pub fn page_size() -> usize { 4 * 1024 }
+
+pub unsafe fn get_preinstalled_memory() -> (usize, usize) { (0, 0) }
 
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
-    unreachable!("Windows is unsupported");
+    let addr = windows::Win32::System::Memory::VirtualAlloc(
+        ptr::null_mut(),
+        size,
+        windows::Win32::System::Memory::MEM_RESERVE | windows::Win32::System::Memory::MEM_COMMIT,
+        windows::Win32::System::Memory::PAGE_READWRITE,
+    );
+
+    if addr == ptr::null_mut() {
+        (ptr::null_mut(), 0, 0)
+    } else {
+        (addr as *mut u8, size, 0)
+    }
 }
 
 pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
-    unreachable!("Windows is unsupported");
+    windows::Win32::System::Memory::VirtualFree(
+        ptr as *mut c_void,
+        size,
+        windows::Win32::System::Memory::MEM_RELEASE).0 != 0
 }
 
 pub use crate::common::get_free_borders;
 
+# [cfg(feature = "global")]
+static MUTEX: Lazy<windows::Win32::Foundation::HANDLE> = unsafe {
+    Lazy::new(|| {
+        windows::Win32::System::Threading::CreateMutexA(
+            ptr::null_mut(),
+            false,
+            windows::core::PCSTR::default (),
+        )
+    })
+};
+
 #[cfg(feature = "global")]
 pub fn acquire_global_lock() {
-    unreachable!("Windows is unsupported");
+    unsafe { dlassert!(windows::Win32::System::Threading::WaitForSingleObject(*MUTEX, u32::MAX) != 0); }
 }
 
 #[cfg(feature = "global")]
 pub fn release_global_lock() {
-    unreachable!("Windows is unsupported");
+    unsafe { dlassert!(windows::Win32::System::Threading::ReleaseMutex(*MUTEX).0 != 0); }
 }
