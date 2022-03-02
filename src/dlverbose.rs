@@ -11,6 +11,13 @@ mod ext {
     }
 }
 
+#[cfg(windows)]
+mod ext {
+    pub fn debug(_s: &str, _size: usize) {
+        unreachable!("Windows is unsupported");
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod ext {
     mod sys {

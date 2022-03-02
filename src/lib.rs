@@ -52,6 +52,10 @@ mod sys;
 #[path = "linux.rs"]
 mod sys;
 
+#[cfg(target_os = "windows")]
+#[path = "windows.rs"]
+mod sys;
+
 #[allow(clippy::new_without_default)]
 impl Dlmalloc {
     /// Creates a new instance of an allocator, same as `DLMALLOC_INIT`.
