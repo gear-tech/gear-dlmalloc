@@ -46,10 +46,12 @@ static MUTEX: Lazy<windows::Win32::Foundation::HANDLE> = unsafe {
 
 #[cfg(feature = "global")]
 pub fn acquire_global_lock() {
-    unsafe { dlassert!(windows::Win32::System::Threading::WaitForSingleObject(*MUTEX, u32::MAX) != 0); }
+    let result  = unsafe { windows::Win32::System::Threading::WaitForSingleObject(*MUTEX, u32::MAX) };
+    dlassert!(result != 0);
 }
 
 #[cfg(feature = "global")]
 pub fn release_global_lock() {
-    unsafe { dlassert!(windows::Win32::System::Threading::ReleaseMutex(*MUTEX).0 != 0); }
+    let result = unsafe { windows::Win32::System::Threading::ReleaseMutex(*MUTEX).0 };
+    dlassert!(result != 0);
 }
