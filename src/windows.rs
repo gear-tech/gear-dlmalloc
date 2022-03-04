@@ -1,15 +1,22 @@
-extern crate windows;
-
 use crate::dlassert;
+use crate::dlverbose;
 use core::ptr;
 use core::ffi::{c_void};
 use once_cell::sync::Lazy;
 
-pub fn page_size() -> usize { 4 * 1024 }
+use windows::Win32::System;
+
+pub fn page_size() -> usize { page_size::get() }
 
 pub unsafe fn get_preinstalled_memory() -> (usize, usize) { (0, 0) }
 
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
+    // let process_heap = System::Memory::GetProcessHeap();
+    // let addr = System::Memory::HeapAlloc(
+    //     process_heap,
+    //     System::Memory::HEAP_ZERO_MEMORY,
+    //     size,
+    // );
     let addr = windows::Win32::System::Memory::VirtualAlloc(
         ptr::null_mut(),
         size,
@@ -25,33 +32,42 @@ pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
 }
 
 pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
-    windows::Win32::System::Memory::VirtualFree(
+    let result = System::Memory::VirtualFree(
         ptr as *mut c_void,
-        size,
-        windows::Win32::System::Memory::MEM_RELEASE).0 != 0
+        0,
+        windows::Win32::System::Memory::MEM_RELEASE).0;
+    // let process_heap = System::Memory::GetProcessHeap();
+    // let result = System::Memory::HeapFree(process_heap, System::Memory::HEAP_NONE, ptr as *mut c_void);
+
+    if result == 0 {
+        let cause = windows::Win32::Foundation::GetLastError().0;
+        dlverbose!("{}", cause);
+    }
+
+    result != 0
 }
 
 pub use crate::common::get_free_borders;
 
-# [cfg(feature = "global")]
-static MUTEX: Lazy<windows::Win32::Foundation::HANDLE> = unsafe {
+#[cfg(feature = "global")]
+static LOCK: Lazy<windows::Win32::Foundation::HANDLE> = unsafe {
     Lazy::new(|| {
         windows::Win32::System::Threading::CreateMutexA(
             ptr::null_mut(),
             false,
-            windows::core::PCSTR::default (),
-        )
+            windows::core::PCSTR::default())
     })
 };
 
+
 #[cfg(feature = "global")]
 pub fn acquire_global_lock() {
-    let result  = unsafe { windows::Win32::System::Threading::WaitForSingleObject(*MUTEX, u32::MAX) };
-    dlassert!(result != 0);
+    let result = unsafe { windows::Win32::System::Threading::WaitForSingleObject(*LOCK, u32::MAX) };
+    dlassert!(result != u32::MAX);
 }
 
 #[cfg(feature = "global")]
 pub fn release_global_lock() {
-    let result = unsafe { windows::Win32::System::Threading::ReleaseMutex(*MUTEX).0 };
+    let result = unsafe { windows::Win32::System::Threading::ReleaseMutex(*LOCK).0 };
     dlassert!(result != 0);
 }

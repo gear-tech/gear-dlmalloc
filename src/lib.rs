@@ -17,8 +17,10 @@
 #![allow(dead_code)]
 #![allow(clippy::missing_safety_doc)]
 
+#[macro_use]
+extern crate lazy_static;
+extern crate windows;
 extern crate once_cell;
-
 
 use core::cmp;
 use core::ptr;
