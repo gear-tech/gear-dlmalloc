@@ -36,12 +36,15 @@ page_size = "0.4.2"
 rand = "0.7.3"
 
 [features]
-default = ["global"]
+default = ["global", "checks"]
 # Enable implementations of the `GlobalAlloc` standard library API, exporting a
 # new `GlobalDlmalloc` as well which implements this trait.
 global = []
 
-# Enable very expensive debug checks in this crate
+# Enable very expensive debug checks
+checks = ["debug"]
+
+# Enable debug assertions
 debug = []
 
 # Verbose allocator work actions

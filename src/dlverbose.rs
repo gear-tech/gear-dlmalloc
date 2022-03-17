@@ -1,6 +1,7 @@
 use core::fmt::Arguments;
 
-pub static DL_CHECKS: bool = cfg!(feature = "debug");
+pub static DL_DEBUG: bool = cfg!(feature = "debug");
+pub static DL_CHECKS: bool = cfg!(feature = "checks");
 pub static DL_VERBOSE: bool = cfg!(feature = "verbose");
 pub static VERBOSE_DEL: &str = "====================================";
 
@@ -92,7 +93,7 @@ pub fn dlassert_fn(line: u32) {
 #[macro_export]
 macro_rules! dlassert {
     ($check:expr) => {
-        if crate::dlverbose::DL_CHECKS && !($check) {
+        if crate::dlverbose::DL_DEBUG && !($check) {
             crate::dlverbose::dlassert_fn(line!());
         }
     };

@@ -15,7 +15,7 @@ use crate::common::{align_down, align_up};
 use crate::dlassert;
 use crate::dlverbose;
 use crate::dlverbose_no_flush;
-use dlverbose::{DL_CHECKS, DL_VERBOSE, VERBOSE_DEL};
+use dlverbose::{DL_CHECKS, DL_DEBUG, DL_VERBOSE, VERBOSE_DEL};
 use sys;
 
 extern crate static_assertions;
@@ -2224,7 +2224,7 @@ impl Dlmalloc {
     // Sanity checks
 
     unsafe fn update_least_addr(&mut self, addr: *mut u8) {
-        if !DL_CHECKS {
+        if !DL_DEBUG {
             return;
         }
         if self.least_addr.is_null() || addr < self.least_addr {
@@ -2233,7 +2233,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_any_chunk(&self, p: *mut Chunk) {
-        if !DL_CHECKS {
+        if !DL_DEBUG {
             return;
         }
 
@@ -2258,7 +2258,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_top_chunk(&self, p: *mut Chunk) {
-        if !DL_CHECKS {
+        if !DL_DEBUG {
             return;
         }
         if self.top.is_null() {
@@ -2278,7 +2278,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_malloced_mem(&self, mem: *mut u8, req_size: usize) {
-        if !DL_CHECKS {
+        if !DL_DEBUG {
             return;
         }
         if mem.is_null() {
@@ -2300,7 +2300,7 @@ impl Dlmalloc {
     }
 
     unsafe fn check_free_chunk(&self, p: *mut Chunk) {
-        if !DL_CHECKS {
+        if !DL_DEBUG {
             return;
         }
         self.check_any_chunk(p);
