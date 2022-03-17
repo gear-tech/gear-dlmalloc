@@ -15,7 +15,7 @@ use crate::common::{align_down, align_up};
 use crate::dlassert;
 use crate::dlverbose;
 use crate::dlverbose_no_flush;
-use dlverbose::{DL_DEBUG, DL_CHECKS, DL_VERBOSE, VERBOSE_DEL};
+use dlverbose::{DL_CHECKS, DL_DEBUG, DL_VERBOSE, VERBOSE_DEL};
 use sys;
 
 extern crate static_assertions;
