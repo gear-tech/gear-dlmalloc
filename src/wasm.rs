@@ -4,8 +4,8 @@ use core::ptr;
 
 mod gear_core {
     extern "C" {
-        pub fn alloc(pages: u32) -> usize;
-        pub fn free(page: u32);
+        pub fn alloc(pages: u32) -> u32;
+        pub fn free(page: u32) -> i32;
     }
 }
 
@@ -35,11 +35,15 @@ pub unsafe fn get_preinstalled_memory() -> (usize, usize) {
 pub unsafe fn alloc(size: usize) -> (*mut u8, usize, u32) {
     crate::dlverbose!("heap base = {:?}", &__heap_base as *const i32);
     let pages = size / page_size();
-    let prev = gear_core::alloc(pages as _);
-    if prev == usize::max_value() {
+    let start = gear_core::alloc(pages as _);
+    if start == u32::MAX {
         return (ptr::null_mut(), 0, 0);
     }
-    ((prev * page_size()) as *mut u8, pages * page_size(), 0)
+    (
+        (start as usize * page_size()) as *mut u8,
+        pages * page_size(),
+        0,
+    )
 }
 
 pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
@@ -51,11 +55,7 @@ pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
     let end_addr = addr + size;
     let last_page = end_addr / page_size() - (if end_addr % page_size() == 0 { 1 } else { 0 });
 
-    for page in first_page..=last_page {
-        gear_core::free(page as _);
-    }
-
-    true
+    (first_page..last_page).all(|page| gear_core::free(page as _) == 0)
 }
 
 pub use crate::common::get_free_borders;
