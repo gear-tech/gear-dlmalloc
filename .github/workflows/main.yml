@@ -28,19 +28,6 @@ jobs:
     - run: cargo test --features debug --release
     - run: cargo run --release --features="debug" --example hello
 
-  test-windows:
-    name: Test-windows
-    runs-on: windows-latest
-    strategy:
-      matrix:
-          rust: [stable, beta, nightly]
-    steps:
-      - uses: actions/checkout@master
-      - name: Install Rust (
-        run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
-      - run: cargo test --features debug --release
-      - run: cargo run --release --features="debug" --example hello
-
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest

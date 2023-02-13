@@ -14,8 +14,8 @@ mod ext {
 
 #[cfg(windows)]
 mod ext {
-    pub fn debug(s: &str, _size: usize) {
-        unsafe { ::windows::Win32::System::Diagnostics::Debug::OutputDebugStringA(s) };
+    pub fn debug(_s: &str, _size: usize) {
+        unreachable!("Windows is unsupported");
     }
 }
 
@@ -26,7 +26,6 @@ mod ext {
             pub fn gr_debug(msg_ptr: *const u8, msg_len: u32);
         }
     }
-
     pub fn debug(s: &str, size: usize) {
         unsafe { sys::gr_debug(s.as_ptr(), size as _) }
     }
@@ -34,7 +33,6 @@ mod ext {
 
 /// Static out buffer type
 type StaticStr = str_buf::StrBuf<200>;
-
 /// Static out buffer - we use it to avoid memory allocations,
 /// when something is printed inside allocator code.
 static mut OUT_BUFFER: StaticStr = StaticStr::new();
@@ -82,7 +80,6 @@ macro_rules! dlverbose_no_flush {
 }
 
 extern crate alloc;
-
 use self::alloc::alloc::handle_alloc_error;
 
 /// Prints current line and throw error using @handle_alloc_error.

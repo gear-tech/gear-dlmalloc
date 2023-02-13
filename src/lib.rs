@@ -11,16 +11,10 @@
 //! Support for other platforms is largely untested and unused, but is used when
 //! testing this crate.
 
-
 #![no_std]
 #![deny(missing_docs)]
 #![allow(dead_code)]
 #![allow(clippy::missing_safety_doc)]
-
-#[macro_use]
-extern crate lazy_static;
-extern crate windows;
-extern crate once_cell;
 
 use core::cmp;
 use core::ptr;
@@ -28,8 +22,6 @@ use core::ptr;
 mod common;
 mod dlmalloc;
 mod dlverbose;
-
-
 
 #[cfg(all(feature = "global", not(test)))]
 mod global;
