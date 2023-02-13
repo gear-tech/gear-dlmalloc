@@ -39,6 +39,7 @@ fn run_stress(seed: u64) {
             if free {
                 let idx = rng.gen_range(0, ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
+                println!("ptr: {:p}, size = {}", ptr, size);
                 a.free(ptr, size, align);
                 continue;
             }
