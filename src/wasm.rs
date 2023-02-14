@@ -55,7 +55,7 @@ pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
     let end_addr = addr + size;
     let last_page = end_addr / page_size() - (if end_addr % page_size() == 0 { 1 } else { 0 });
 
-    (first_page..last_page).all(|page| gear_core::free(page as _) == 0)
+    (first_page..=last_page).all(|page| gear_core::free(page as _) == 0)
 }
 
 pub use crate::common::get_free_borders;
