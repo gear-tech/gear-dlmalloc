@@ -37,19 +37,19 @@ fn run_stress(seed: u64) {
             let free = !ptrs.is_empty()
                 && ((ptrs.len() < 10_000 && rng.gen_bool(1f64 / 3f64)) || rng.gen());
             if free {
-                let idx = rng.gen_range(0, ptrs.len());
+                let idx = rng.gen_range(0..ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
                 a.free(ptr, size, align);
                 continue;
             }
 
             if !ptrs.is_empty() && rng.gen_bool(1f64 / 100f64) {
-                let idx = rng.gen_range(0, ptrs.len());
+                let idx = rng.gen_range(0..ptrs.len());
                 let (ptr, size, align) = ptrs.swap_remove(idx);
                 let new_size = if rng.gen() {
-                    rng.gen_range(size, size * 2)
+                    rng.gen_range(size..size * 2)
                 } else if size > 10 {
-                    rng.gen_range(size / 2, size)
+                    rng.gen_range(size / 2..size)
                 } else {
                     continue;
                 };
@@ -66,12 +66,12 @@ fn run_stress(seed: u64) {
             }
 
             let size = if rng.gen() {
-                rng.gen_range(1, 128)
+                rng.gen_range(1..128)
             } else {
-                rng.gen_range(1, 128 * 1024)
+                rng.gen_range(1..128 * 1024)
             };
             let align = if rng.gen_bool(1f64 / 10f64) {
-                1 << rng.gen_range(3, 8)
+                1 << rng.gen_range(3..8)
             } else {
                 8
             };

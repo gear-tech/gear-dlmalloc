@@ -83,6 +83,7 @@ impl Dlmalloc {
     /// point to `size` bytes of zeros.
     #[inline]
     pub unsafe fn calloc(&mut self, size: usize, align: usize) -> *mut u8 {
+        dlverbose!("DL CALLOC");
         let ptr = self.malloc(size, align);
         if !ptr.is_null() {
             ptr::write_bytes(ptr, 0, size);

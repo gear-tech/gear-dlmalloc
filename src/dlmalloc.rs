@@ -339,20 +339,20 @@ struct Segment {
 ///
 /// Some facts:
 /// 1) Two neighbor chunks cannot be free in the same time.
-/// If one chunk bacame to be free and there is neighbor free chunk,
+/// If one chunk became free and there is neighbor free chunk,
 /// then this chunks will be merged.
-/// 2) Cannot be two neigbor segments.
+/// 2) Cannot be two neighbor segments.
 /// If we allocate new segment in [Dlmalloc::sys_alloc] and there is
 /// neighbor segment in allocator context, then we merge this segments.
-/// 3) [MIN_CHUNK_SIZE] is min size, which in use chunk may have.
-/// Free chunks also may have size == [MALIGN]. This chunks is not
-/// stored in tree or smallbins and cannot be used in malloc.
+/// 3) [MIN_CHUNK_SIZE] is min size, which allocated chunk may have.
+/// Free chunks also may have size == [MALIGN]. These chunks are not
+/// stored into tree or smallbins and cannot be used in malloc.
 /// But this chunks can be merged with other free neighbor chunk.
 /// see more in [Chunk].
 /// 4) If no heap memory is allocated yet, then dlmalloc use static
 /// buffer for small requests allocations, in order to increase
 /// allocation performance. See more in [Dlmalloc::malloc].
-/// 5) Some memory can be preinistalled by system,
+/// 5) Some memory can be preinstalled by system,
 /// this memory is added in context in [Dlmalloc::sys_alloc] first call.
 ///
 #[repr(align(16))]
@@ -384,7 +384,7 @@ pub struct Dlmalloc {
     /// Pointer to the first segment in segments list.
     /// Null if list is empty.
     seg: *mut Segment,
-    /// Whether preinstalled memory inititializtion has been done?
+    /// Whether preinstalled memory initialization has been done?
     preinstallation_is_done: bool,
     /// The least allocated addr in self live (for checks only)
     least_addr: *mut u8,
@@ -2243,7 +2243,11 @@ impl Dlmalloc {
         dlassert!(Chunk::to_mem(p) as usize % MALIGN == 0);
         dlassert!(p as *mut u8 >= self.least_addr);
 
-        // Checks that @p doesn't intersect some other chunk
+        if !DL_CHECKS {
+            return;
+        }
+
+        // Checks that `p` doesn't intersect some other chunk
         let mut seg = self.seg;
         while !seg.is_null() {
             let mut chunk = (*seg).base as *mut Chunk;
@@ -2267,6 +2271,10 @@ impl Dlmalloc {
         }
         self.check_any_chunk(p);
 
+        if !DL_CHECKS {
+            return;
+        }
+
         let sp = self.segment_holding(p as *mut u8);
         let sz = Chunk::size(p);
         dlassert!(!sp.is_null());
@@ -2286,7 +2294,6 @@ impl Dlmalloc {
         }
         let p = Chunk::from_mem(mem);
         let sz = Chunk::size(p);
-        self.check_any_chunk(p);
         self.check_cinuse_chunk(p);
         dlassert!(sz >= MIN_CHUNK_SIZE);
         dlassert!(sz >= req_size + PTR_SIZE);
