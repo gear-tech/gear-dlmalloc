@@ -36,7 +36,7 @@ page_size = "0.6.0"
 rand = "0.8.5"
 
 [features]
-default = ["global", "checks"]
+default = ["global"]
 
 # Enable implementations of the `GlobalAlloc` standard library API, exporting a
 # new `GlobalDlmalloc` as well which implements this trait.
