@@ -19,7 +19,7 @@ doctest = false
 
 [target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
 libc = { version = "0.2.101", default-features = false }
-libc_print = { git = "https://github.com/grishasobol/rust-libc-print.git" }
+libc-print = "0.1"
 
 [dependencies]
 # For more information on these dependencies see rust-lang/rust's
@@ -37,6 +37,7 @@ rand = "0.8.5"
 
 [features]
 default = ["global", "checks"]
+
 # Enable implementations of the `GlobalAlloc` standard library API, exporting a
 # new `GlobalDlmalloc` as well which implements this trait.
 global = []
