@@ -56,8 +56,8 @@ fn test2() {
 
         for i in 0..100 {
             println!("{}", i);
-            let rem_number: usize = rng.gen_range(0, 100);
-            let add_number: usize = rng.gen_range(rem_number, rem_number + 10);
+            let rem_number: usize = rng.gen_range(0..100);
+            let add_number: usize = rng.gen_range(rem_number..rem_number + 10);
             for _ in 0..add_number {
                 let val: u64 = rng.gen();
                 v1.push(val);
@@ -68,7 +68,7 @@ fn test2() {
             }
             for _ in 0..rem_number {
                 assert_eq!(v1.len(), v2.len());
-                let index: usize = rng.gen_range(0, v1.len());
+                let index: usize = rng.gen_range(0..v1.len());
                 v1.remove(index);
                 v2.remove(index);
                 l1.pop_back();
