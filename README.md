@@ -1,26 +1,12 @@
-# dlmalloc-rs
+# gear-dlmalloc
 
-A port of [dlmalloc] to Rust.
+[![docs.rs](https://img.shields.io/docsrs/gear-dlmalloc)](https://docs.rs/gear-dlmalloc)
+[![Crates.io Version](https://img.shields.io/crates/v/gear-dlmalloc)](https://crates.io/crates/gear-dlmalloc/)
 
-[Documentation](https://docs.rs/dlmalloc)
 
-[dlmalloc]: http://gee.cs.oswego.edu/dl/html/malloc.html
+This is a fork of https://github.com/alexcrichton/dlmalloc-rs used by Gear protocol and [Vara](https://vara.network/) chain.
 
-## Why dlmalloc?
-
-This crate is a port of [dlmalloc] to Rust, and doesn't rely on C. The primary
-purpose of this crate is to serve as the default allocator for Rust on the
-`wasm32-unknown-unknown` target. At the time this was written the wasm target
-didn't support C code, so it was required to have a Rust-only solution.
-
-This allocator is not the most performant by a longshot. It is primarily, I
-think, intended for being easy to port and easy to learn. I didn't dive too deep
-into the implementation when writing it, it's just a straight port of the C
-version.
-
-It's unlikely that Rust code needs to worry/interact with this allocator in
-general. Most of the time you'll be manually switching to a different allocator
-:)
+All credit for original version goes to [@alexcrichton](https://github.com/alexcrichton)
 
 # License
 
@@ -32,6 +18,7 @@ This project is licensed under either of
    http://opensource.org/licenses/MIT)
 
 at your option.
+
 
 ### Contribution
 

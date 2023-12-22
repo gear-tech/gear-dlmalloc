@@ -5,7 +5,7 @@ use core::ptr;
 mod gear_core {
     extern "C" {
         pub fn alloc(pages: u32) -> u32;
-        pub fn free(page: u32) -> i32;
+        pub fn free_range(start: u32, end: u32) -> i32;
     }
 }
 
@@ -55,7 +55,7 @@ pub unsafe fn free(ptr: *mut u8, size: usize) -> bool {
     let end_addr = addr + size;
     let last_page = end_addr / page_size() - (if end_addr % page_size() == 0 { 1 } else { 0 });
 
-    (first_page..=last_page).all(|page| gear_core::free(page as _) == 0)
+    gear_core::free_range(first_page as _, last_page as _) == 0
 }
 
 pub use crate::common::get_free_borders;

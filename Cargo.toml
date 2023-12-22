@@ -1,12 +1,12 @@
 [package]
-name = "dlmalloc"
-version = "0.1.4"
-authors = ["Alex Crichton <alex@alexcrichton.com>"]
+name = "gear-dlmalloc"
+version = "0.2.0"
+authors = ["Alex Crichton <alex@alexcrichton.com>", "Gear Technologies"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/alexcrichton/dlmalloc-rs"
-homepage = "https://github.com/alexcrichton/dlmalloc-rs"
-documentation = "https://docs.rs/dlmalloc"
+repository = "https://github.com/gear-tech/dlmalloc-rust"
+homepage = "https://github.com/gear-tech/dlmalloc-rust"
+documentation = "https://docs.rs/gear-dlmalloc"
 description = """
 A Rust port of the dlmalloc allocator
 """

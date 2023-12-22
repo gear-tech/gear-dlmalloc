@@ -1,6 +1,6 @@
 #![cfg(feature = "global")]
 
-extern crate dlmalloc;
+extern crate gear_dlmalloc;
 extern crate rand;
 
 use std::collections::LinkedList;
@@ -10,7 +10,7 @@ use rand::Rng;
 use rand::SeedableRng;
 
 #[global_allocator]
-static A: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
+static A: gear_dlmalloc::GlobalDlmalloc = gear_dlmalloc::GlobalDlmalloc;
 
 #[derive(Debug, Clone, Copy)]
 struct Point {

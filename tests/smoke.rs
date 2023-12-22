@@ -1,7 +1,7 @@
-extern crate dlmalloc;
+extern crate gear_dlmalloc;
 extern crate rand;
 
-use dlmalloc::Dlmalloc;
+use gear_dlmalloc::Dlmalloc;
 use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;

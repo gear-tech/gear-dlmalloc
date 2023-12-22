@@ -1,12 +1,12 @@
 #![cfg(feature = "global")]
 
-extern crate dlmalloc;
+extern crate gear_dlmalloc;
 
 use std::collections::HashMap;
 use std::thread;
 
 #[global_allocator]
-static A: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
+static A: gear_dlmalloc::GlobalDlmalloc = gear_dlmalloc::GlobalDlmalloc;
 
 #[test]
 fn foo() {
