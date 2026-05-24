@@ -1,7 +1,7 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::ops::{Deref, DerefMut};
 
-use Dlmalloc;
+use crate::Dlmalloc;
 
 /// An instance of a "global allocator" backed by `Dlmalloc`
 ///
@@ -36,30 +36,30 @@ pub unsafe fn get_alloced_mem_size() -> usize {
     <Dlmalloc>::get_alloced_mem_size(&get())
 }
 
-static mut DLMALLOC: Dlmalloc = Dlmalloc(::dlmalloc::DLMALLOC_INIT);
+static mut DLMALLOC: Dlmalloc = Dlmalloc(crate::dlmalloc::DLMALLOC_INIT);
 
 struct Instance;
 
 unsafe fn get() -> Instance {
-    ::sys::acquire_global_lock();
+    crate::sys::acquire_global_lock();
     Instance
 }
 
 impl Deref for Instance {
     type Target = Dlmalloc;
     fn deref(&self) -> &Dlmalloc {
-        unsafe { &DLMALLOC }
+        unsafe { &*&raw const DLMALLOC }
     }
 }
 
 impl DerefMut for Instance {
     fn deref_mut(&mut self) -> &mut Dlmalloc {
-        unsafe { &mut DLMALLOC }
+        unsafe { &mut *&raw mut DLMALLOC }
     }
 }
 
 impl Drop for Instance {
     fn drop(&mut self) {
-        ::sys::release_global_lock()
+        crate::sys::release_global_lock()
     }
 }

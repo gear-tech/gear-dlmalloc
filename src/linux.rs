@@ -37,10 +37,10 @@ static mut LOCK: libc::pthread_mutex_t = libc::PTHREAD_MUTEX_INITIALIZER;
 
 #[cfg(feature = "global")]
 pub fn acquire_global_lock() {
-    unsafe { assert_eq!(libc::pthread_mutex_lock(&mut LOCK), 0) }
+    unsafe { assert_eq!(libc::pthread_mutex_lock(&mut *&raw mut LOCK), 0) }
 }
 
 #[cfg(feature = "global")]
 pub fn release_global_lock() {
-    unsafe { assert_eq!(libc::pthread_mutex_unlock(&mut LOCK), 0) }
+    unsafe { assert_eq!(libc::pthread_mutex_unlock(&mut *&raw mut LOCK), 0) }
 }
