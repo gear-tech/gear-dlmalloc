@@ -23,7 +23,7 @@ fn map() {
 
 #[test]
 fn strings() {
-    format!("foo, bar, {}", "baz");
+    let _ = format!("foo, bar, {}", "baz");
 }
 
 #[test]

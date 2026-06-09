@@ -48,7 +48,7 @@ mod sys;
 #[path = "macos.rs"]
 mod sys;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "linux.rs"]
 mod sys;
 

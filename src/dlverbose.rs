@@ -42,9 +42,9 @@ static mut OUT_BUFFER: StaticStr = StaticStr::new();
 #[inline(never)]
 pub fn dlprint_fn(args: Arguments<'_>) {
     unsafe {
-        core::fmt::write(&mut OUT_BUFFER, args).unwrap();
-        ext::debug(&OUT_BUFFER, OUT_BUFFER.len());
-        OUT_BUFFER.set_len(0);
+        core::fmt::write(&mut *&raw mut OUT_BUFFER, args).unwrap();
+        ext::debug(&*&raw const OUT_BUFFER, (&*&raw const OUT_BUFFER).len());
+        (&mut *&raw mut OUT_BUFFER).set_len(0);
     }
 }
 
@@ -53,7 +53,7 @@ pub fn dlprint_fn(args: Arguments<'_>) {
 #[inline(never)]
 pub fn dlwrite_fn(args: Arguments<'_>) {
     unsafe {
-        core::fmt::write(&mut OUT_BUFFER, args).unwrap();
+        core::fmt::write(&mut *&raw mut OUT_BUFFER, args).unwrap();
     }
 }
 
